@@ -1,0 +1,5 @@
+edge-tts==6.1.9
+EbookLib==0.18
+beautifulsoup4==4.12.3
+Pillow==10.2.0
+ffmpeg-python==0.2.0
