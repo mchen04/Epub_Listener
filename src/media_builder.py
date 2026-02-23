@@ -53,12 +53,12 @@ def create_chapter_video(image_path, audio_path, output_mp4, duration_ms):
         "ffmpeg",
         "-y", # overwrite output
         "-loop", "1",
+        "-framerate", "1", # Extremely low framerate since it's a static image
         "-i", image_path,
         "-i", audio_path,
         "-c:v", "libx264",
         "-tune", "stillimage",
-        "-c:a", "aac",
-        "-b:a", "192k",
+        "-c:a", "copy", # Copy audio directly without re-encoding to save massive time
         "-pix_fmt", "yuv420p",
         "-shortest", # Stop encoding when the shortest stream (audio) ends
         "-t", str(duration_sec),
