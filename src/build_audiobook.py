@@ -1,8 +1,9 @@
 import argparse
 import os
+import shutil
 import tempfile
 from epub_parser import extract_chapters
-from tts_engine import generate_chapter_audio
+from tts_engine import generate_chapter_audio, get_audio_duration_ms
 from media_builder import generate_chapter_image, create_chapter_video, build_metadata_file, merge_videos_and_metadata
 
 def main():
@@ -11,6 +12,7 @@ def main():
     parser.add_argument("output_mp4", help="Path to the output MP4 file (e.g. audiobook.mp4)")
     parser.add_argument("--speed", default="+0%", help="Playback speed modifier (e.g., +10%, -20%)")
     parser.add_argument("--voice", default="en-US-AriaNeural", help="Edge-TTS Voice to use")
+    parser.add_argument("--resume-dir", default=None, help="Directory containing previously generated temp files to resume from")
     
     args = parser.parse_args()
     
@@ -31,8 +33,28 @@ def main():
     video_segments = []
     metadata_list = []
     
-    # Use a system temporary directory to automatically handle complex cleanup
-    with tempfile.TemporaryDirectory(prefix="epub_audiobook_") as temp_dir:
+    # Use existing dir if resuming, else create temp
+    is_temp = False
+    if args.resume_dir and os.path.exists(args.resume_dir):
+        print(f"Resuming from existing directory: {args.resume_dir}")
+        temp_dir = args.resume_dir
+        
+        # Auto-delete the last generated chapter to prevent resuming from a corrupted partial file
+        existing_mp4s = sorted([f for f in os.listdir(temp_dir) if f.startswith("chap_") and f.endswith(".mp4")])
+        if existing_mp4s:
+            latest_mp4 = existing_mp4s[-1]
+            base_name = os.path.splitext(latest_mp4)[0]
+            print(f"Auto-deleting latest chapter files ({base_name}.*) to prevent corruption...")
+            for ext in [".mp4", ".mp3", ".png"]:
+                file_to_remove = os.path.join(temp_dir, f"{base_name}{ext}")
+                if os.path.exists(file_to_remove):
+                    os.remove(file_to_remove)
+                    
+    else:
+        temp_dir = tempfile.mkdtemp(prefix="epub_audiobook_")
+        is_temp = True
+
+    try:
         # Loop through each chapter to build audio/video parts
         for i, chapter in enumerate(chapters):
             safe_title = "".join(c for c in chapter['title'] if c.isalnum() or c in (' ', '_')).rstrip()
@@ -45,6 +67,17 @@ def main():
             image_path = os.path.join(temp_dir, f"chap_{i:03d}.png")
             video_path = os.path.join(temp_dir, f"chap_{i:03d}.mp4")
             
+            # Check if this chapter was already generated
+            if os.path.exists(video_path) and os.path.getsize(video_path) > 0 and os.path.exists(audio_path):
+                print(f"     [-] Found existing video frame. Skipping generation for '{safe_title}'")
+                duration_ms = get_audio_duration_ms(audio_path)
+                video_segments.append(video_path)
+                metadata_list.append({
+                    "title": chapter['title'],
+                    "duration": duration_ms
+                })
+                continue
+                
             # 2. TTS Generation
             print("     [a] Generating TTS AI Voice...")
             duration_ms = generate_chapter_audio(chapter['text'], audio_path, speed=args.speed, voice=args.voice)
@@ -87,5 +120,12 @@ def main():
         else:
             print("\nError encountered during final video assembly.")
             
+    finally:
+        # Cleanup temporary files only if we created them
+        if is_temp:
+            print("Cleaning up temporary workspace...")
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+
 if __name__ == "__main__":
     main()
