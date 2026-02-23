@@ -126,9 +126,22 @@ def merge_videos_and_metadata(video_segments, metadata_file, final_output):
         "-i", concat_list_file,
         "-i", metadata_file,
         "-map_metadata", "1", # Use metadata from the 2nd input file (the txt file)
-        "-c", "copy", # Copy streams directly without re-encoding (extremely fast)
-        final_output
     ]
+    
+    # If MP3 mode, just copy audio stream and set ID3 tags appropriately
+    if final_output.lower().endswith(".mp3"):
+        command.extend([
+            "-c:a", "copy",
+            "-write_id3v1", "1",
+            "-id3v2_version", "3"
+        ])
+    else:
+        # MP4 Mode
+        command.extend([
+            "-c", "copy" # Copy both video and audio streams directly
+        ])
+        
+    command.append(final_output)
     
     try:
         subprocess.run(command, check=True)
