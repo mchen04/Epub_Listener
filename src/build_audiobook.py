@@ -1,6 +1,6 @@
 import argparse
 import os
-import shutil
+import tempfile
 from epub_parser import extract_chapters
 from tts_engine import generate_chapter_audio
 from media_builder import generate_chapter_image, create_chapter_video, build_metadata_file, merge_videos_and_metadata
@@ -28,14 +28,11 @@ def main():
         return
     print(f"Found {len(chapters)} chapters. Proceeding to audio generation.")
     
-    # Create temp workspace
-    temp_dir = "temp_audiobook_build"
-    os.makedirs(temp_dir, exist_ok=True)
-    
     video_segments = []
     metadata_list = []
     
-    try:
+    # Use a system temporary directory to automatically handle complex cleanup
+    with tempfile.TemporaryDirectory(prefix="epub_audiobook_") as temp_dir:
         # Loop through each chapter to build audio/video parts
         for i, chapter in enumerate(chapters):
             safe_title = "".join(c for c in chapter['title'] if c.isalnum() or c in (' ', '_')).rstrip()
@@ -90,11 +87,5 @@ def main():
         else:
             print("\nError encountered during final video assembly.")
             
-    finally:
-        # Cleanup temporary files
-        print("Cleaning up temporary workspace...")
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-
 if __name__ == "__main__":
     main()

@@ -1,6 +1,11 @@
 import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup
+import warnings
+
+# Suppress noisy ebooklib warnings about future versions
+warnings.filterwarnings('ignore', category=UserWarning, module='ebooklib.epub')
+warnings.filterwarnings('ignore', category=FutureWarning, module='ebooklib.epub')
 
 def extract_chapters(epub_path):
     """
