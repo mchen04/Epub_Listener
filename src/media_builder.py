@@ -73,7 +73,7 @@ def create_chapter_video(image_path, audio_path, output_mp4, duration_ms):
         print(f"Failed to create video for {image_path}: {e}")
         return False
 
-def build_metadata_file(chapters_info, output_meta_path="ffmetadata.txt"):
+def build_metadata_file(chapters_info, book_title="Audiobook", book_author="Unknown Author", output_meta_path="ffmetadata.txt"):
     """
     Generates an FFMETADATA1 formatted file for chapter skipping capability.
     
@@ -83,7 +83,10 @@ def build_metadata_file(chapters_info, output_meta_path="ffmetadata.txt"):
     """
     with open(output_meta_path, "w", encoding="utf-8") as f:
         f.write(";FFMETADATA1\n")
-        f.write("title=Audiobook\n\n")
+        f.write(f"title={book_title}\n")
+        f.write(f"artist={book_author}\n")
+        f.write(f"album_artist={book_author}\n")
+        f.write(f"album={book_title}\n\n")
         
         current_time_ms = 0
         

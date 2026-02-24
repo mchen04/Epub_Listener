@@ -46,10 +46,15 @@ def main():
     # 1. Parse EPUB
     print("Step 1/4: Parsing EPUB into chapters...")
     chapters = extract_chapters(args.input_epub)
+    
+    # Calculate metadata overrides
+    book_title = os.path.splitext(os.path.basename(args.input_epub))[0]
+    book_author = "Michael Chen"
+    
     if not chapters:
         print("Error: No chapters found in the EPUB file.")
         return
-    print(f"Found {len(chapters)} chapters. Proceeding to audio generation.")
+    print(f"Found {len(chapters)} chapters for '{book_title}' by {book_author}. Proceeding to audio generation.")
     
     video_segments = []
     metadata_list = []
@@ -155,7 +160,7 @@ def main():
         # 5. Build standard Chapters Metadata
         print("\nStep 3/4: Compiling chapter metadata...")
         meta_file = os.path.join(temp_dir, "ffmetadata.txt")
-        build_metadata_file(metadata_list, output_meta_path=meta_file)
+        build_metadata_file(metadata_list, book_title=book_title, book_author=book_author, output_meta_path=meta_file)
         
         # 6. Final concatenation
         print(f"\nStep 4/4: Exporting final audiobook: {args.output_path}")
