@@ -14,6 +14,7 @@ def main():
     parser.add_argument("--output-dir", default="outputs", help="Directory to save generated audiobooks (default: outputs)")
     parser.add_argument("--speed", default="+0%", help="Playback speed modifier (e.g., +10, -20)")
     parser.add_argument("--voice", default="en-US-AriaNeural", help="Edge-TTS Voice to use")
+    parser.add_argument("--author", default="Michael Chen", help="Author string for audiobook metadata")
     parser.add_argument("--resume-dir", default=None, help="Directory containing previously generated temp files to resume from")
     
     args = parser.parse_args()
@@ -49,7 +50,7 @@ def main():
     
     # Calculate metadata overrides
     book_title = os.path.splitext(os.path.basename(args.input_epub))[0]
-    book_author = "Michael Chen"
+    book_author = args.author
     
     if not chapters:
         print("Error: No chapters found in the EPUB file.")

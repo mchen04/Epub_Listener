@@ -1,9 +1,0 @@
-;FFMETADATA1
-title=Test MP3
-
-[CHAPTER]
-TIMEBASE=1/1000
-START=0
-END=1000
-title=Chapter 1 Test
-

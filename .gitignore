@@ -50,3 +50,9 @@ concat_list.txt
 build.log
 run_build.sh
 nohup.out
+
+# Output Directory
+outputs/
+
+# Leftover Markdown test files
+chap*.md
