@@ -7,6 +7,7 @@ It leverages **[Edge-TTS](https://github.com/rany2/edge-tts)**, a free Python wr
 ## Features
 - **High-Quality AI Narration**: Uses Microsoft Azure's premium AI voices.
 - **Dynamic Video Chapters**: Generates an `.mp4` file that natively supports "Skip to Chapter" functionality on iPhone, VLC, QuickTime, and Google Drive.
+- **Automatic MP3 ID3 Tags**: By default, generates `.mp3` files injected with chapters, the EPUB filename as the Title, and "Michael Chen" as the Artist/Author.
 - **Customizable Playback Speed**: Accelerate or decelerate the narration generation speed directly from the CLI.
 - **Visual Progress**: Automatically generates a beautiful, clean video frame displaying the title of the current chapter as you listen.
 
