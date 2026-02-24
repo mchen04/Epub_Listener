@@ -37,23 +37,38 @@ Before you begin, ensure you have the following installed on your machine:
 
 ## Usage
 
-Simply invoke the CLI script, providing the path to your input EPUB file and your desired `.mp4` destination file.
+Simply invoke the CLI script with the path to your input EPUB file. By default, it will automatically build a `.mp3` file and save it into an `outputs/` folder.
 
 ```bash
-# Basic usage
-python src/build_audiobook.py my_book.epub my_audiobook.mp4
+# Basic usage (defaults to building an MP3 in the outputs/ directory)
+python src/build_audiobook.py my_book.epub
 ```
 
 ### Advanced Options
 
+- **Output Path**: You can explicitly specify the exact destination file and format you want.
+  ```bash
+  python src/build_audiobook.py my_book.epub /tmp/custom_location.mp4
+  ```
+
+- **Output Format**: If you don't provide an exact path, you can specify if you want an `mp3` or `mp4`.
+  ```bash
+  python src/build_audiobook.py my_book.epub --format mp4
+  ```
+
+- **Output Directory**: You can specify a different folder for auto-generated files.
+  ```bash
+  python src/build_audiobook.py my_book.epub --output-dir ~/Desktop/Audiobooks/
+  ```
+
 - **Speed Customization**: You can speed up or slow down the narrator by providing the `--speed` flag.
   ```bash
-  python src/build_audiobook.py my_book.epub my_audiobook.mp4 --speed +15%
+  python src/build_audiobook.py my_book.epub --speed +15%
   ```
 
 - **Voice Customization**: By default, the script uses `en-US-AriaNeural`. You can change this using the `--voice` flag.
   ```bash
-  python src/build_audiobook.py my_book.epub my_audiobook.mp4 --voice en-GB-RyanNeural
+  python src/build_audiobook.py my_book.epub --voice en-GB-RyanNeural
   ```
 
 ### Running in the Background

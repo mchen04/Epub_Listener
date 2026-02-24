@@ -9,14 +9,27 @@ from media_builder import generate_chapter_image, create_chapter_video, build_me
 def main():
     parser = argparse.ArgumentParser(description="Convert an EPUB file into a narrated Audiobook MP4 or MP3 file with chapters.")
     parser.add_argument("input_epub", help="Path to the input EPUB file (e.g. book.epub)")
-    parser.add_argument("output_path", help="Path to the output file (e.g. audiobook.mp4 or audiobook.mp3)")
-    parser.add_argument("--speed", default="+0%", help="Playback speed modifier (e.g., +10%, -20%)")
+    parser.add_argument("output_path", nargs="?", default=None, help="Optional: Path to the output file. If omitted, it will auto-generate in the output-dir.")
+    parser.add_argument("--format", choices=["mp3", "mp4"], default="mp3", help="Output format if output_path is not specified (default: mp3)")
+    parser.add_argument("--output-dir", default="outputs", help="Directory to save generated audiobooks (default: outputs)")
+    parser.add_argument("--speed", default="+0%", help="Playback speed modifier (e.g., +10, -20)")
     parser.add_argument("--voice", default="en-US-AriaNeural", help="Edge-TTS Voice to use")
     parser.add_argument("--resume-dir", default=None, help="Directory containing previously generated temp files to resume from")
     
     args = parser.parse_args()
     
-    # Determine output mode
+    # Generate output path if not explicitly provided
+    if args.output_path is None:
+        base_name = os.path.splitext(os.path.basename(args.input_epub))[0]
+        # Clean the base name to be filesystem safe
+        safe_name = "".join(c for c in base_name if c.isalnum() or c in (' ', '_', '-')).rstrip()
+        
+        # Ensure output directory exists
+        os.makedirs(args.output_dir, exist_ok=True)
+        
+        args.output_path = os.path.join(args.output_dir, f"{safe_name}_audiobook.{args.format}")
+    
+    # Determine output mode from the final path
     _, ext = os.path.splitext(args.output_path)
     output_ext = ext.lower()
     if output_ext not in [".mp4", ".mp3"]:
@@ -145,11 +158,11 @@ def main():
         build_metadata_file(metadata_list, output_meta_path=meta_file)
         
         # 6. Final concatenation
-        print(f"\nStep 4/4: Exporting final audiobook: {args.output_mp4}")
-        merge_success = merge_videos_and_metadata(video_segments, meta_file, args.output_mp4)
+        print(f"\nStep 4/4: Exporting final audiobook: {args.output_path}")
+        merge_success = merge_videos_and_metadata(video_segments, meta_file, args.output_path)
         
         if merge_success:
-            print(f"\nSuccess! Audiobook saved to {args.output_mp4}.")
+            print(f"\nSuccess! Audiobook saved to {args.output_path}.")
             print("You can view this file in VLC, QuickTime, or on a Phone to skip through chapters.")
         else:
             print("\nError encountered during final video assembly.")
