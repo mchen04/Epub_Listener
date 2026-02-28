@@ -13,8 +13,8 @@ It leverages **[Edge-TTS](https://github.com/rany2/edge-tts)**, a free Python wr
 
 ## Prerequisites
 Before you begin, ensure you have the following installed on your machine:
-- **Python 3.8+**
-- **FFmpeg**: The script heavily relies on FFmpeg to stitch the video files and burn the chapter metadata. 
+- **Python 3.10+**
+- **FFmpeg**: The script heavily relies on FFmpeg to stitch the video files and burn the chapter metadata.
   - On macOS, you can install it via Homebrew: `brew install ffmpeg`
 
 ## Installation
@@ -88,3 +88,4 @@ tail -f build.log
 2. **Audio Generation**: Chunks the chapter text and feeds it asynchronously to the `edge-tts` API, pulling down premium `.mp3` audio.
 3. **Visual Frame Generation**: Uses `Pillow` to dynamically create a text-centered image containing the chapter marker.
 4. **Assembly**: Uses `ffmpeg` to pair the audio and imagery, compute total millisecond duration, format an `FFMETADATA1` file, and seamlessly concatenate everything into a standalone `.mp4` video.
+5. **Metadata Tagging**: Uses `mutagen` to inject ID3 tags (title, artist, chapters) into generated `.mp3` files.

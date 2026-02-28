@@ -43,13 +43,17 @@ temp_audiobook_build/
 ffmetadata.txt
 concat_list.txt
 
-# Do not commit specific EPUBs or large generated books
+# EPUBs
 *.epub
+epub/
 
-# Logs and background scripts
+# Logs
+logs/
 build.log
-run_build.sh
 nohup.out
+
+# Build scripts
+run_build.sh
 
 # Output Directory
 outputs/
