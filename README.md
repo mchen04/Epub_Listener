@@ -1,25 +1,22 @@
 # Epub Listener
 
-Epub Listener is a Python-based audiobook generator that takes any standard `.epub` file and transforms it into a fully narrated `.mp4` audiobook complete with skip-able chapters and a dynamic video track displaying the current chapter. 
-
-It leverages **[Edge-TTS](https://github.com/rany2/edge-tts)**, a free Python wrapper for Microsoft Azure's premium cognitive AI voices, to provide incredibly realistic narration without the need to manage API keys or pay for expensive cloud subscriptions.
+Epub Listener is a Python-based audiobook generator that takes any standard `.epub` file and transforms it into a fully narrated `.mp3` audiobook with skip-able chapters. It uses **Edge-TTS** (Microsoft Azure's premium AI voices — free, no API key needed).
 
 ## Features
-- **High-Quality AI Narration**: Uses Microsoft Azure's premium AI voices.
-- **Dynamic Video Chapters**: Generates an `.mp4` file that natively supports "Skip to Chapter" functionality on iPhone, VLC, QuickTime, and Google Drive.
-- **Automatic MP3 ID3 Tags**: By default, generates `.mp3` files injected with chapters, the EPUB filename as the Title, and "Michael Chen" as the Artist/Author.
-- **Customizable Playback Speed**: Accelerate or decelerate the narration generation speed directly from the CLI.
-- **Visual Progress**: Automatically generates a beautiful, clean video frame displaying the title of the current chapter as you listen.
+- **High-Quality AI Narration**: Uses Microsoft Azure's premium AI voices via Edge-TTS.
+- **MP3 with Chapters**: Output is `.mp3` with embedded ID3 chapter metadata for skip-to-chapter support.
+- **Customizable Playback Speed**: Accelerate or decelerate the narration speed directly from the CLI.
+- **Voice Selection**: Choose from a variety of Edge-TTS voices.
+- **Resume Support**: Resume interrupted builds without re-generating completed chapters.
 
 ## Prerequisites
-Before you begin, ensure you have the following installed on your machine:
 - **Python 3.10+**
-- **FFmpeg**: The script heavily relies on FFmpeg to stitch the video files and burn the chapter metadata.
-  - On macOS, you can install it via Homebrew: `brew install ffmpeg`
+- **FFmpeg**: Required for audio assembly and metadata embedding.
+  - On macOS: `brew install ffmpeg`
 
 ## Installation
 
-1. Clone this repository to your local machine:
+1. Clone this repository:
    ```bash
    git clone https://github.com/mchen04/Epub_Listener.git
    cd Epub_Listener
@@ -38,54 +35,50 @@ Before you begin, ensure you have the following installed on your machine:
 
 ## Usage
 
-Simply invoke the CLI script with the path to your input EPUB file. By default, it will automatically build a `.mp3` file and save it into an `outputs/` folder.
-
 ```bash
-# Basic usage (defaults to building an MP3 in the outputs/ directory)
+# Basic usage — outputs an MP3 into the outputs/ directory
 python src/build_audiobook.py my_book.epub
 ```
 
-### Advanced Options
+### Options
 
-- **Output Path**: You can explicitly specify the exact destination file and format you want.
+- **Custom output path**:
   ```bash
-  python src/build_audiobook.py my_book.epub /tmp/custom_location.mp4
+  python src/build_audiobook.py my_book.epub /tmp/my_audiobook.mp3
   ```
 
-- **Output Format**: If you don't provide an exact path, you can specify if you want an `mp3` or `mp4`.
-  ```bash
-  python src/build_audiobook.py my_book.epub --format mp4
-  ```
-
-- **Output Directory**: You can specify a different folder for auto-generated files.
+- **Output directory**:
   ```bash
   python src/build_audiobook.py my_book.epub --output-dir ~/Desktop/Audiobooks/
   ```
 
-- **Speed Customization**: You can speed up or slow down the narrator by providing the `--speed` flag.
+- **Playback speed** (`--speed`):
   ```bash
   python src/build_audiobook.py my_book.epub --speed +15%
   ```
 
-- **Voice Customization**: By default, the script uses `en-US-AriaNeural`. You can change this using the `--voice` flag.
+- **Voice** (`--voice`): Defaults to `en-US-AriaNeural`.
   ```bash
   python src/build_audiobook.py my_book.epub --voice en-GB-RyanNeural
   ```
 
+- **Resume an interrupted build** (`--resume-dir`):
+  ```bash
+  python src/build_audiobook.py my_book.epub --resume-dir /tmp/epub_audiobook_xyz
+  ```
+
 ### Running in the Background
-Audio generation for large books (e.g., 50+ chapters) can take hours due to the sheer volume of downloaded voice data and video rendering. It is highly recommended to run long processes in an isolated session on macOS (such as `screen` or `tmux`) so your operating system does not suspend the background script.
+Audio generation for large books (e.g., 50+ chapters) can take a long time. Run in a persistent session so your OS doesn't suspend it:
 
 ```bash
-# Launching in a background screen session
-screen -S builder -d -m bash -c "source venv/bin/activate && python src/build_audiobook.py input.epub out.mp4 > build.log 2>&1"
+# Launch in a background screen session
+screen -S builder -d -m bash -c "source venv/bin/activate && python src/build_audiobook.py input.epub > build.log 2>&1"
 
 # Monitor progress
 tail -f build.log
 ```
 
 ## How It Works
-1. **Parser Engine**: Uses `EbookLib` and `BeautifulSoup4` to crawl the EPUB's navigation structure, isolating chapter titles and scrubbing raw HTML to extract pure text.
-2. **Audio Generation**: Chunks the chapter text and feeds it asynchronously to the `edge-tts` API, pulling down premium `.mp3` audio.
-3. **Visual Frame Generation**: Uses `Pillow` to dynamically create a text-centered image containing the chapter marker.
-4. **Assembly**: Uses `ffmpeg` to pair the audio and imagery, compute total millisecond duration, format an `FFMETADATA1` file, and seamlessly concatenate everything into a standalone `.mp4` video.
-5. **Metadata Tagging**: Uses `mutagen` to inject ID3 tags (title, artist, chapters) into generated `.mp3` files.
+1. **Parser**: Uses `EbookLib` and `BeautifulSoup4` to crawl the EPUB's navigation structure, extract chapter titles, and scrub HTML to plain text.
+2. **Audio Generation**: Feeds each chapter's text to Edge-TTS to produce a `.mp3` audio segment.
+3. **Assembly**: Uses `ffmpeg` to concatenate all chapter segments, generate an `FFMETADATA1` chapter map, and merge everything into a single `.mp3` with embedded chapter metadata and ID3 tags.

@@ -4,48 +4,45 @@ import os
 import subprocess
 import json
 
-# Recommended natural voices: en-US-AriaNeural, en-GB-RyanNeural, en-US-GuyNeural
-DEFAULT_VOICE = "en-US-AriaNeural"
+# Recommended Edge-TTS voices: en-US-AriaNeural, en-GB-RyanNeural, en-US-GuyNeural
+DEFAULT_EDGE_VOICE = "en-US-AriaNeural"
 
-async def _generate_audio(text, output_file, voice, rate):
-    """
-    Asynchronous helper to communicate with Edge-TTS and save the audio file.
-    """
+
+async def _edge_tts_async(text, output_file, voice, rate):
+    """Async helper to communicate with Edge-TTS and save the audio file."""
     communicate = edge_tts.Communicate(text, voice, rate=rate)
     await communicate.save(output_file)
 
-def generate_chapter_audio(text, output_path, speed="+0%", voice=DEFAULT_VOICE):
+
+def generate_chapter_audio(text, output_path, *, speed="+0%", voice=None):
     """
-    Generates an audio file from text using Edge-TTS natively via Python asyncio.
-    Synchronous wrapper meant to be called by the main tool.
-    
+    Generate an audio file from text using Edge-TTS.
+
     Args:
-        text (str): The chapter text to convert.
-        output_path (str): The destination path for the .mp3 file.
-        speed (str): The speech rate string formatted as '+X%' or '-X%'.
-        voice (str): The Edge-TTS voice identifier.
-        
+        text: The chapter text to convert.
+        output_path: Destination path for the .mp3 file.
+        speed: Speech rate string (e.g. '+10%', '-20%').
+        voice: Edge-TTS voice identifier. Defaults to en-US-AriaNeural.
+
     Returns:
         int: Duration of the generated audio in milliseconds, or 0 if failed.
     """
+    voice = voice or DEFAULT_EDGE_VOICE
     try:
-        # Run the asynchronous edge_tts command synchronously
-        asyncio.run(_generate_audio(text, output_path, voice, speed))
-        
-        # We need the exact duration in milliseconds for accurate chapter metadata.
-        # We can use ffprobe to get this efficiently.
+        asyncio.run(_edge_tts_async(text, output_path, voice, speed))
         if os.path.exists(output_path):
             return get_audio_duration_ms(output_path)
-            
+    except ConnectionError as e:
+        print(f"Edge-TTS connection error for {output_path}: {e}")
+    except OSError as e:
+        print(f"Edge-TTS OS error for {output_path}: {e}")
     except Exception as e:
-        print(f"Error generating audio for file {output_path}: {e}")
-        
+        print(f"Edge-TTS error for {output_path}: {type(e).__name__}: {e}")
     return 0
 
+
 def get_audio_duration_ms(audio_file_path):
-    """
-    Uses ffprobe to extract the exact duration of an audio file in milliseconds.
-    """
+    """Uses ffprobe to extract the exact duration of an audio file in milliseconds."""
     try:
         command = [
             "ffprobe",
@@ -54,24 +51,26 @@ def get_audio_duration_ms(audio_file_path):
             "-show_format",
             audio_file_path
         ]
-        
+
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         data = json.loads(result.stdout)
-        
+
         if "format" in data and "duration" in data["format"]:
-            # Duration is returned in seconds as a float string, e.g., "12.3456"
             duration_sec = float(data["format"]["duration"])
-            # Convert to milliseconds and round to integer
             return int(duration_sec * 1000)
-    except Exception as e:
-        print(f"Error calculating duration for {audio_file_path}: {e}")
-        
+    except FileNotFoundError:
+        print("Error: ffprobe not found. Is FFmpeg installed?")
+    except subprocess.CalledProcessError as e:
+        print(f"Error running ffprobe on {audio_file_path}: {e}")
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        print(f"Error parsing ffprobe output for {audio_file_path}: {e}")
+
     return 0
 
+
 if __name__ == "__main__":
-    # Test script for the TTS module
-    test_text = "This is a brief test chapter, evaluating whether the Edge-TTS integration is functioning correctly and generating valid MP3 files."
+    test_text = "This is a brief test chapter, evaluating whether the TTS integration is functioning correctly and generating valid MP3 files."
     test_out = "test_output.mp3"
-    print(f"Generating test audio '{test_out}'...")
+    print(f"Generating test audio '{test_out}' with Edge-TTS...")
     duration = generate_chapter_audio(test_text, test_out, speed="+20%")
     print(f"Completed! Duration: {duration} ms")

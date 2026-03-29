@@ -14,6 +14,9 @@ def extract_chapters(epub_path):
     """
     try:
         book = epub.read_epub(epub_path)
+    except FileNotFoundError:
+        print(f"Error: EPUB file not found: {epub_path}")
+        return []
     except Exception as e:
         print(f"Error reading EPUB file: {e}")
         return []

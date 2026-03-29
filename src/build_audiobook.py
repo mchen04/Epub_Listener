@@ -4,177 +4,121 @@ import shutil
 import tempfile
 from epub_parser import extract_chapters
 from tts_engine import generate_chapter_audio, get_audio_duration_ms
-from media_builder import generate_chapter_image, create_chapter_video, build_metadata_file, merge_videos_and_metadata
+from media_builder import build_metadata_file, merge_audio_and_metadata
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert an EPUB file into a narrated Audiobook MP4 or MP3 file with chapters.")
+    parser = argparse.ArgumentParser(description="Convert an EPUB file into a narrated MP3 audiobook with chapters.")
     parser.add_argument("input_epub", help="Path to the input EPUB file (e.g. book.epub)")
-    parser.add_argument("output_path", nargs="?", default=None, help="Optional: Path to the output file. If omitted, it will auto-generate in the output-dir.")
-    parser.add_argument("--format", choices=["mp3", "mp4"], default="mp3", help="Output format if output_path is not specified (default: mp3)")
+    parser.add_argument("output_path", nargs="?", default=None, help="Optional: Path to the output .mp3 file. If omitted, auto-generates in --output-dir.")
     parser.add_argument("--output-dir", default="outputs", help="Directory to save generated audiobooks (default: outputs)")
-    parser.add_argument("--speed", default="+0%", help="Playback speed modifier (e.g., +10, -20)")
-    parser.add_argument("--voice", default="en-US-AriaNeural", help="Edge-TTS Voice to use")
+    parser.add_argument("--speed", default="+0%", help="Playback speed modifier (e.g., +10%%, -20%%)")
+    parser.add_argument("--voice", default=None, help="Edge-TTS voice to use (e.g. en-US-AriaNeural, en-GB-RyanNeural)")
     parser.add_argument("--author", default="Michael Chen", help="Author string for audiobook metadata")
     parser.add_argument("--resume-dir", default=None, help="Directory containing previously generated temp files to resume from")
-    
+
     args = parser.parse_args()
-    
+
     # Generate output path if not explicitly provided
     if args.output_path is None:
         base_name = os.path.splitext(os.path.basename(args.input_epub))[0]
-        # Clean the base name to be filesystem safe
         safe_name = "".join(c for c in base_name if c.isalnum() or c in (' ', '_', '-')).rstrip()
-        
-        # Ensure output directory exists
         os.makedirs(args.output_dir, exist_ok=True)
-        
-        args.output_path = os.path.join(args.output_dir, f"{safe_name}_audiobook.{args.format}")
-    
-    # Determine output mode from the final path
+        args.output_path = os.path.join(args.output_dir, f"{safe_name}_audiobook.mp3")
+
     _, ext = os.path.splitext(args.output_path)
-    output_ext = ext.lower()
-    if output_ext not in [".mp4", ".mp3"]:
-        print(f"Error: Output file must end with .mp4 or .mp3. (Got '{output_ext}')")
+    if ext.lower() != ".mp3":
+        print(f"Error: Output file must end with .mp3. (Got '{ext}')")
         return
-    is_mp3_mode = (output_ext == ".mp3")
-    
+
     if not os.path.exists(args.input_epub):
         print(f"Error: Could not find '{args.input_epub}'")
         return
-        
+
     print(f"Starting conversion for: {args.input_epub}")
-    
+
     # 1. Parse EPUB
     print("Step 1/4: Parsing EPUB into chapters...")
     chapters = extract_chapters(args.input_epub)
-    
-    # Calculate metadata overrides
+
     book_title = os.path.splitext(os.path.basename(args.input_epub))[0]
     book_author = args.author
-    
+
     if not chapters:
         print("Error: No chapters found in the EPUB file.")
         return
     print(f"Found {len(chapters)} chapters for '{book_title}' by {book_author}. Proceeding to audio generation.")
-    
-    video_segments = []
+
+    audio_segments = []
     metadata_list = []
-    
+
     # Use existing dir if resuming, else create temp
     is_temp = False
     if args.resume_dir and os.path.exists(args.resume_dir):
         print(f"Resuming from existing directory: {args.resume_dir}")
         temp_dir = args.resume_dir
-        
-        # Auto-delete the last generated chapter to prevent resuming from a corrupted partial file
-        existing_mp4s = sorted([f for f in os.listdir(temp_dir) if f.startswith("chap_") and f.endswith(".mp4")])
-        if existing_mp4s:
-            latest_mp4 = existing_mp4s[-1]
-            base_name = os.path.splitext(latest_mp4)[0]
-            print(f"Auto-deleting latest chapter files ({base_name}.*) to prevent corruption...")
-            for ext in [".mp4", ".mp3", ".png"]:
-                file_to_remove = os.path.join(temp_dir, f"{base_name}{ext}")
-                if os.path.exists(file_to_remove):
-                    os.remove(file_to_remove)
-                    
+
+        # Auto-delete the last generated chapter to prevent corruption
+        existing_files = sorted([f for f in os.listdir(temp_dir) if f.startswith("chap_") and f.endswith(".mp3")])
+        if existing_files:
+            last_file = os.path.join(temp_dir, existing_files[-1])
+            print(f"Auto-deleting latest chapter file ({existing_files[-1]}) to prevent corruption...")
+            os.remove(last_file)
     else:
         temp_dir = tempfile.mkdtemp(prefix="epub_audiobook_")
         is_temp = True
 
     try:
-        # Loop through each chapter to build audio/video parts
+        # 2. Generate audio for each chapter
+        print("Step 2/4: Generating chapter audio...")
         for i, chapter in enumerate(chapters):
             safe_title = "".join(c for c in chapter['title'] if c.isalnum() or c in (' ', '_')).rstrip()
             if not safe_title:
                 safe_title = f"Chapter_{i+1}"
-                
+
             print(f"  -> Processing: '{safe_title}' ({i+1}/{len(chapters)})")
-            
+
             audio_path = os.path.join(temp_dir, f"chap_{i:03d}.mp3")
-            image_path = os.path.join(temp_dir, f"chap_{i:03d}.png")
-            video_path = os.path.join(temp_dir, f"chap_{i:03d}.mp4")
-            
-            # In MP3 mode, we skip video generation entirely
-            if is_mp3_mode:
-                if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
-                    duration_ms = get_audio_duration_ms(audio_path)
-                    video_segments.append(audio_path) # Append raw audio instead of video
-                    metadata_list.append({
-                        "title": chapter['title'],
-                        "duration": duration_ms
-                    })
-                    continue
-                else:
-                    # 2. TTS Generation
-                    print("     [a] Generating TTS AI Voice...")
-                    duration_ms = generate_chapter_audio(chapter['text'], audio_path, speed=args.speed, voice=args.voice)
-                    if duration_ms <= 0:
-                        print(f"     [!] Warning: Failed to generate audio for '{safe_title}'")
-                        continue
-                        
-                    video_segments.append(audio_path)
-                    metadata_list.append({
-                        "title": chapter['title'],
-                        "duration": duration_ms
-                    })
-                    
-            # MP4 Mode
-            else:
-                # Check if this chapter was already generated
-                if os.path.exists(video_path) and os.path.getsize(video_path) > 0 and os.path.exists(audio_path):
-                    print(f"     [-] Found existing video frame. Skipping generation for '{safe_title}'")
-                    duration_ms = get_audio_duration_ms(audio_path)
-                    video_segments.append(video_path)
-                    metadata_list.append({
-                        "title": chapter['title'],
-                        "duration": duration_ms
-                    })
-                    continue
-                    
-                # 2. TTS Generation
-                print("     [a] Generating TTS AI Voice...")
-                duration_ms = generate_chapter_audio(chapter['text'], audio_path, speed=args.speed, voice=args.voice)
-                
-                if duration_ms <= 0:
-                    print(f"     [!] Warning: Failed to generate audio for '{safe_title}'")
-                    continue
-                    
-                # 3. Generating visual frame
-                print("     [b] Building dynamic chapter visual...")
-                generate_chapter_image(chapter['title'], image_path)
-                
-                # 4. Mix video/audio splice for chapter
-                print("     [c] Combining streams via ffmpeg...")
-                success = create_chapter_video(image_path, audio_path, video_path, duration_ms)
-                
-                if success:
-                    video_segments.append(video_path)
-                    metadata_list.append({
-                        "title": chapter['title'],
-                        "duration": duration_ms
-                    })
-        
-        if not video_segments:
+
+            # Resume: skip if segment already exists and is valid
+            if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+                print(f"     [-] Found existing file. Skipping generation for '{safe_title}'")
+                duration_ms = get_audio_duration_ms(audio_path)
+                audio_segments.append(audio_path)
+                metadata_list.append({"title": chapter['title'], "duration": duration_ms})
+                continue
+
+            print("     [a] Generating TTS AI Voice...")
+            duration_ms = generate_chapter_audio(
+                chapter['text'], audio_path,
+                speed=args.speed, voice=args.voice
+            )
+            if duration_ms <= 0:
+                print(f"     [!] Warning: Failed to generate audio for '{safe_title}'")
+                continue
+
+            audio_segments.append(audio_path)
+            metadata_list.append({"title": chapter['title'], "duration": duration_ms})
+
+        if not audio_segments:
             print("Error: Failed to process any valid chapters.")
             return
-            
-        # 5. Build standard Chapters Metadata
+
+        # 3. Build chapter metadata
         print("\nStep 3/4: Compiling chapter metadata...")
         meta_file = os.path.join(temp_dir, "ffmetadata.txt")
         build_metadata_file(metadata_list, book_title=book_title, book_author=book_author, output_meta_path=meta_file)
-        
-        # 6. Final concatenation
+
+        # 4. Final concatenation
         print(f"\nStep 4/4: Exporting final audiobook: {args.output_path}")
-        merge_success = merge_videos_and_metadata(video_segments, meta_file, args.output_path)
-        
+        merge_success = merge_audio_and_metadata(audio_segments, meta_file, args.output_path)
+
         if merge_success:
             print(f"\nSuccess! Audiobook saved to {args.output_path}.")
-            print("You can view this file in VLC, QuickTime, or on a Phone to skip through chapters.")
+            print("You can open this file in VLC, QuickTime, or on your Phone to skip through chapters.")
         else:
-            print("\nError encountered during final video assembly.")
-            
+            print("\nError encountered during final audio assembly.")
+
     finally:
-        # Cleanup temporary files only if we created them
         if is_temp:
             print("Cleaning up temporary workspace...")
             if os.path.exists(temp_dir):
