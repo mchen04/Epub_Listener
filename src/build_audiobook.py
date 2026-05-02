@@ -15,6 +15,9 @@ def main():
     parser.add_argument("--voice", default=None, help="Edge-TTS voice to use (e.g. en-US-AriaNeural, en-GB-RyanNeural)")
     parser.add_argument("--author", default="Michael Chen", help="Author string for audiobook metadata")
     parser.add_argument("--resume-dir", default=None, help="Directory containing previously generated temp files to resume from")
+    parser.add_argument("--use-kokoro", action="store_true", help="Use local Kokoro-82M TTS instead of Edge-TTS")
+    parser.add_argument("--kokoro-voice", default=None, help="Kokoro voice to use (e.g. af_heart, am_fenrir). Only used with --use-kokoro")
+    parser.add_argument("--kokoro-lang", default="a", help="Kokoro language code (default: 'a' for American English)")
 
     args = parser.parse_args()
 
@@ -90,7 +93,10 @@ def main():
             print("     [a] Generating TTS AI Voice...")
             duration_ms = generate_chapter_audio(
                 chapter['text'], audio_path,
-                speed=args.speed, voice=args.voice
+                speed=args.speed, voice=args.voice,
+                use_kokoro=args.use_kokoro,
+                kokoro_voice=args.kokoro_voice,
+                kokoro_lang=args.kokoro_lang
             )
             if duration_ms <= 0:
                 print(f"     [!] Warning: Failed to generate audio for '{safe_title}'")

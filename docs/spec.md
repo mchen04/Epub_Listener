@@ -18,6 +18,16 @@ Epub_Listener is an audiobook generation tool that takes an EPUB file as input a
 - Speed adjustment supported via rate parameter
 - Voices: en-US-AriaNeural (default), en-GB-RyanNeural, en-US-GuyNeural, etc.
 
+### 3.1b AI TTS — Kokoro-82M (local, optional)
+- Open-weight TTS model with 82 million parameters (StyleTTS 2 architecture)
+- Runs entirely offline; no internet or API key required after first download
+- Comparable quality to larger models while being significantly faster and more cost-efficient
+- Outputs 24 kHz WAV, converted internally to MP3 via ffmpeg
+- Supports voice selection and speed control
+- First run downloads ~300 MB of model weights; requires `espeak-ng` system package
+- Language codes: `a` (American English, default), `b` (British English), plus other languages
+- See available voices at: https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
+
 ### 3.2 Media Format & Chapter Navigation
 - **FFmpeg Integration**: FFmpeg encodes the final output MP3 by concatenating per-chapter audio segments.
 - **Chapter Metadata**: Created via `FFMETADATA1` format with `[CHAPTER]` blocks containing millisecond start/end times.

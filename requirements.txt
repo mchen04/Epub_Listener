@@ -2,3 +2,5 @@ edge-tts==7.2.7
 EbookLib==0.20
 beautifulsoup4==4.14.3
 requests>=2.32
+kokoro>=0.9.4
+soundfile>=0.13

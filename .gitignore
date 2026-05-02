@@ -57,6 +57,7 @@ run_build.sh
 
 # Output Directory
 outputs/
+test_outputs/
 
 # Leftover Markdown test files
 chap*.md
