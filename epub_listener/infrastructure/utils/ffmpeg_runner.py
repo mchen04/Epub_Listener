@@ -33,7 +33,7 @@ def run_ffmpeg(*args: str | Path, timeout: int = 300) -> subprocess.CompletedPro
             check=True,
         )
     except subprocess.TimeoutExpired as exc:
-        logger.error("ffmpeg timed out after %ds", timeout)
+        logger.error("ffmpeg timed out after %ds. Partial stderr: %s", timeout, exc.stderr or "")
         raise AssemblyError(f"ffmpeg timed out after {timeout}s") from exc
     except subprocess.CalledProcessError as exc:
         logger.error("ffmpeg failed: %s", exc.stderr)

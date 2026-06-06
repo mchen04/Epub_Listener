@@ -1,6 +1,7 @@
 """Worm (by Wildbow) scraper."""
 
 import argparse
+import html
 import logging
 import sys
 import time
@@ -32,27 +33,30 @@ class WormScraper(NovelScraper):
         self.end = end
 
     def scrape(self, output_path: str) -> None:
-        """Scrape Worm and save as EPUB."""
-        session = requests.Session()
-        all_links = self._get_chapter_links(session)
-        links = all_links[self.start : self.end]
+        """Scrape Worm and save as EPUB.
 
-        if not links:
-            logger.error("No chapters in selected range.")
-            sys.exit(1)
+        Raises:
+            ValueError: If the selected chapter range is empty.
+        """
+        with requests.Session() as session:
+            all_links = self._get_chapter_links(session)
+            links = all_links[self.start : self.end]
 
-        logger.info("Scraping %d chapters...", len(links))
-        chapters: list[tuple[str, str]] = []
-        for i, (title, url) in enumerate(links):
-            logger.info("  [%d/%d] %s", i + 1, len(links), title)
-            try:
-                html = self._fetch_chapter_html(url, session)
-                chapters.append((title, html))
-            except Exception as exc:
-                logger.warning("Failed to fetch %s: %s", url, exc)
-                chapters.append((title, f"<p>[Failed to fetch: {exc}]</p>"))
-            if i < len(links) - 1:
-                time.sleep(self.delay)
+            if not links:
+                raise ValueError("No chapters in the selected range.")
+
+            logger.info("Scraping %d chapters...", len(links))
+            chapters: list[tuple[str, str]] = []
+            for i, (title, url) in enumerate(links):
+                logger.info("  [%d/%d] %s", i + 1, len(links), title)
+                try:
+                    body = self._fetch_chapter_html(url, session)
+                    chapters.append((title, body))
+                except Exception as exc:
+                    logger.warning("Failed to fetch %s: %s", url, exc)
+                    chapters.append((title, f"<p>[Failed to fetch: {html.escape(str(exc))}]</p>"))
+                if i < len(links) - 1:
+                    time.sleep(self.delay)
 
         self._build_epub(chapters, output_path)
 
@@ -138,7 +142,7 @@ class WormScraper(NovelScraper):
             chapter_id = f"chapter_{i:04d}"
             file_name = f"{chapter_id}.xhtml"
             c = epub.EpubHtml(title=title, file_name=file_name, lang="en")
-            c.content = f"<html><body><h1>{title}</h1>{html_body}</html>"
+            c.content = f"<html><body><h1>{html.escape(title)}</h1>{html_body}</html>"
             book.add_item(c)
             epub_chapters.append(c)
             spine.append(c)
@@ -160,7 +164,11 @@ def main() -> None:
     args = parser.parse_args()
 
     scraper = WormScraper(delay=args.delay, start=args.start, end=args.end)
-    scraper.scrape(args.output)
+    try:
+        scraper.scrape(args.output)
+    except ValueError as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

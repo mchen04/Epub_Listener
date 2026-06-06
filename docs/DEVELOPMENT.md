@@ -24,20 +24,25 @@ mypy epub_listener/
 ## Adding a New TTS Provider
 
 1. Create `epub_listener/infrastructure/tts/my_tts.py`.
-2. Implement `TTSProvider` from `epub_listener/application/ports.py`.
+2. Implement the `TTSProvider` Protocol from `epub_listener/application/ports.py`.
 3. Wire it in `epub_listener/__main__.py`.
 
-Example:
-
 ```python
-from epub_listener.application.ports import TTSProvider
+from pathlib import Path
+from epub_listener.application.ports import ConcurrencyStrategy
 
-class MyTTSProvider(TTSProvider):
+class MyTTSProvider:
     def generate(self, text: str, output: Path, voice: str | None, speed: str) -> int:
+        """Return duration in ms, or 0 on failure (do not raise for per-chapter errors)."""
         ...
-    def supports_concurrency(self) -> str:
+
+    def supports_concurrency(self) -> ConcurrencyStrategy:
         return "sequential"
 ```
+
+`generate()` should return `0` on per-chapter failure so the orchestrator can skip that chapter and continue building. Only raise for unrecoverable errors (missing binary, invalid auth, etc.).
+
+The `execute()` signature is `use_case.execute(settings, *, temp_dir=temp_dir)`. If you call `BuildAudiobookUseCase` directly (e.g., in tests), pass the same `temp_dir` to both `JsonProgressTracker` and `execute()` so cached audio and tracker state are co-located.
 
 ## Adding a New Scraper
 

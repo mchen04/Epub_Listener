@@ -1,10 +1,22 @@
 # Troubleshooting
 
-## Resume Not Working
+## Resuming an Interrupted Build
 
-The progress tracker uses **SHA256 checksums** of chapter text. If the EPUB content changed (e.g., re-downloaded with different formatting), chapters will be regenerated.
+When a fresh build is interrupted or fails, the program prints the temp directory path:
 
-To force a fresh build, omit `--resume-dir` or delete the progress directory.
+```
+Resume with: --resume-dir /tmp/epub_audiobook_abc123
+```
+
+Pass that path on the next run to skip already-completed chapters:
+
+```bash
+python -m epub_listener my_book.epub --resume-dir /tmp/epub_audiobook_abc123
+```
+
+The progress tracker uses **SHA-256 checksums** of chapter text. If the EPUB content changed between runs (e.g., re-downloaded with different formatting), affected chapters are regenerated automatically.
+
+**Note**: On a successful build, the temp dir is deleted. Only interrupted/failed builds preserve it.
 
 ## FFmpeg Not Found
 

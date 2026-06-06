@@ -1,9 +1,11 @@
 """Application ports (abstract interfaces)."""
 
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from epub_listener.domain.models import AudioSegment, Chapter
+
+ConcurrencyStrategy = Literal["sequential", "async", "parallel"]
 
 
 class ChapterParser(Protocol):
@@ -17,28 +19,22 @@ class ChapterParser(Protocol):
 class TTSProvider(Protocol):
     """Generates audio from text."""
 
-    def generate(
-        self,
-        text: str,
-        output: Path,
-        voice: str | None,
-        speed: str,
-    ) -> int:
+    def generate(self, text: str, output: Path, voice: str | None, speed: str) -> int:
         """Generate audio and return duration in milliseconds, or 0 on failure."""
         ...
 
-    def supports_concurrency(self) -> str:
-        """Return concurrency strategy: 'sequential', 'async', or 'parallel'."""
+    def supports_concurrency(self) -> ConcurrencyStrategy:
+        """Return the concurrency strategy this provider supports."""
         ...
 
     async def generate_many(
         self,
         jobs: list[tuple[str, Path, str | None, str]],
     ) -> list[int]:
-        """Concurrent generation for multiple chapters.
+        """Generate audio for many chapters concurrently, returning per-job durations.
 
-        Default implementation raises NotImplementedError.
-        Providers that support async concurrency should override.
+        Only providers that report ``supports_concurrency() == "async"`` need to
+        implement this; the default raises for everyone else.
         """
         raise NotImplementedError
 
@@ -51,8 +47,8 @@ class MediaAssembler(Protocol):
         segments: list[AudioSegment],
         metadata_path: Path,
         output: Path,
-    ) -> bool:
-        """Merge segments into final output. Returns True on success."""
+    ) -> None:
+        """Merge segments into the final output. Raises AssemblyError on failure."""
         ...
 
 
@@ -66,8 +62,8 @@ class MetadataBuilder(Protocol):
         book_title: str,
         book_author: str,
         output: Path,
-    ) -> Path:
-        """Write metadata file and return its path."""
+    ) -> None:
+        """Write the metadata file to ``output``."""
         ...
 
 
@@ -78,20 +74,10 @@ class ProgressTracker(Protocol):
         """Check if a chapter with this checksum is already complete."""
         ...
 
-    def mark_complete(self, chapter_id: str, checksum: str) -> None:
-        """Mark a chapter as complete."""
+    def cached_duration_ms(self, chapter_id: str) -> int:
+        """Return the recorded audio duration for a completed chapter, or 0 if unknown."""
         ...
 
-    def get_existing_segments(self) -> dict[str, Path]:
-        """Return mapping of chapter_id -> existing audio file path."""
+    def mark_complete(self, chapter_id: str, checksum: str, duration_ms: int) -> None:
+        """Mark a chapter complete and durably record its generated audio duration."""
         ...
-
-    def save(self) -> None:
-        """Persist tracker state."""
-        ...
-
-
-class FileSanitizer(Protocol):
-    """Sanitizes strings for safe filesystem usage."""
-
-    def sanitize(self, name: str) -> str: ...

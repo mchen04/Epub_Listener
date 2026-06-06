@@ -1,10 +1,13 @@
 """Application configuration via Pydantic."""
 
 from pathlib import Path
-from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from epub_listener.application.ports import ConcurrencyStrategy
+from epub_listener.domain.sanitize import sanitize_filename
+from epub_listener.domain.speed import is_valid_speed
 
 
 class Settings(BaseSettings):
@@ -28,8 +31,7 @@ class Settings(BaseSettings):
     resume_dir: Path | None = Field(default=None, description="Directory to resume from")
     use_kokoro: bool = Field(default=False, description="Use local Kokoro TTS")
     kokoro_voice: str | None = Field(default=None, description="Kokoro voice identifier")
-    kokoro_lang: str = Field(default="a", description="Kokoro language code")
-    concurrency: Literal["sequential", "async", "parallel"] = Field(
+    concurrency: ConcurrencyStrategy = Field(
         default="async", description="Concurrency strategy"
     )
     max_workers: int = Field(default=4, description="Max workers for parallel generation")
@@ -38,9 +40,7 @@ class Settings(BaseSettings):
     @field_validator("speed")
     @classmethod
     def validate_speed(cls, v: str) -> str:
-        import re
-
-        if not re.fullmatch(r"[+-]?\d+%", v.strip()):
+        if not is_valid_speed(v):
             raise ValueError("Speed must be like +10% or -20%")
         return v.strip()
 
@@ -51,11 +51,18 @@ class Settings(BaseSettings):
             raise ValueError(f"Input file not found: {v}")
         return v
 
+    @property
+    def resolved_voice(self) -> str | None:
+        """The voice to use for the active TTS backend."""
+        return self.kokoro_voice if self.use_kokoro else self.voice
+
     def resolve_output_path(self) -> Path:
-        """Determine final output path from explicit path or auto-generated name."""
+        """Determine the final output path from an explicit path or an auto-generated name.
+
+        Pure: computes the path without creating directories (the orchestrator
+        owns directory creation).
+        """
         if self.output_path:
             return self.output_path
-        base = self.input_epub.stem
-        safe = "".join(c for c in base if c.isalnum() or c in (" ", "_", "-")).rstrip()
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        safe = sanitize_filename(self.input_epub.stem)
         return self.output_dir / f"{safe}_audiobook.mp3"

@@ -36,7 +36,7 @@ python -m epub_listener my_book.epub --voice en-GB-RyanNeural --speed +15%
 # Use local Kokoro TTS
 python -m epub_listener my_book.epub --use-kokoro --kokoro-voice af_heart
 
-# Resume an interrupted build
+# Resume an interrupted build (path is printed on interrupt/failure)
 python -m epub_listener my_book.epub --resume-dir /tmp/epub_audiobook_xxx
 ```
 

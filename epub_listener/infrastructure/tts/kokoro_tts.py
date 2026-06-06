@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from epub_listener.application.ports import TTSProvider
+from epub_listener.application.ports import ConcurrencyStrategy, TTSProvider
 from epub_listener.domain.exceptions import TTSGenerationError
 from epub_listener.infrastructure.tts.base import edge_speed_to_multiplier
 from epub_listener.infrastructure.utils.audio_probe import get_audio_duration_ms
@@ -26,7 +26,7 @@ class KokoroTTSProvider(TTSProvider):
     def __init__(self) -> None:
         self._pipelines: dict[str, Any] = {}
 
-    def supports_concurrency(self) -> str:
+    def supports_concurrency(self) -> ConcurrencyStrategy:
         return "parallel"
 
     def _get_pipeline(self, lang_code: str) -> Any:
