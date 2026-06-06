@@ -20,11 +20,8 @@ class FFmpegMediaAssembler(MediaAssembler):
         segments: list[AudioSegment],
         metadata_path: Path,
         output: Path,
-    ) -> bool:
-        """Merge segments into final output.
-
-        Returns True on success, raises AssemblyError on failure.
-        """
+    ) -> None:
+        """Merge segments into the final output. Raises AssemblyError on failure."""
         if not segments:
             raise AssemblyError("No audio segments to assemble.")
 
@@ -32,7 +29,7 @@ class FFmpegMediaAssembler(MediaAssembler):
         try:
             with open(concat_list, "w", encoding="utf-8") as f:
                 for seg in segments:
-                    escaped = str(seg.path).replace("'", "'\\''")
+                    escaped = str(seg.path).replace("\\", "\\\\").replace("'", "\\'")
                     f.write(f"file '{escaped}'\n")
 
             run_ffmpeg(
@@ -55,7 +52,6 @@ class FFmpegMediaAssembler(MediaAssembler):
                 output,
             )
             logger.info("Assembled final audiobook: %s", output)
-            return True
         finally:
             if concat_list.exists():
                 try:

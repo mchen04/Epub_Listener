@@ -44,16 +44,13 @@ class EbookLibParser(ChapterParser):
 
             soup = BeautifulSoup(item.get_body_content(), "html.parser")
 
-            # Extract title from heading tags
             heading = soup.find(["h1", "h2", "title"])
             title = heading.get_text(strip=True) if heading else "Unknown Chapter"
 
-            # Deduplicate identical consecutive titles
             if title in seen_titles:
                 title = f"{title} ({doc_index})"
             seen_titles.add(title)
 
-            # Extract text, preserving paragraph structure
             text = soup.get_text(separator="\n")
             cleaned_lines = [line.strip() for line in text.split("\n") if line.strip()]
             cleaned_text = "\n\n".join(cleaned_lines)

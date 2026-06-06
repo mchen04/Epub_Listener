@@ -1,11 +1,14 @@
 """Composition root and entry point."""
 
 import logging
+import shutil
 import sys
+import tempfile
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from epub_listener.application.orchestrator import BuildAudiobookUseCase
+from epub_listener.application.ports import TTSProvider
 from epub_listener.cli import parse_args
 from epub_listener.domain.exceptions import EpubListenerError
 from epub_listener.infrastructure.media.ffmpeg_assembler import FFmpegMediaAssembler
@@ -50,35 +53,42 @@ def main() -> int:
     settings = parse_args()
     setup_logging(settings.log_level)
 
-    parser = EbookLibParser()
-    tts: EdgeTTSProvider | KokoroTTSProvider = (
-        KokoroTTSProvider() if settings.use_kokoro else EdgeTTSProvider()
-    )
-
-    temp_dir = settings.resume_dir if settings.resume_dir else None
-    tracker = JsonProgressTracker(temp_dir or Path(".epub_listener_progress"))
-    assembler = FFmpegMediaAssembler()
-    metadata_builder = FFmpegMetadataBuilder()
-
-    use_case = BuildAudiobookUseCase(
-        parser=parser,
-        tts=tts,
-        assembler=assembler,
-        metadata_builder=metadata_builder,
-        tracker=tracker,
-    )
+    if settings.resume_dir and settings.resume_dir.exists():
+        temp_dir = settings.resume_dir
+        auto_created = False
+        logging.info("Resuming from: %s", temp_dir)
+    else:
+        temp_dir = Path(tempfile.mkdtemp(prefix="epub_audiobook_"))
+        auto_created = True
 
     try:
-        output = use_case.execute(settings)
+        tts: TTSProvider = KokoroTTSProvider() if settings.use_kokoro else EdgeTTSProvider()
+        use_case = BuildAudiobookUseCase(
+            parser=EbookLibParser(),
+            tts=tts,
+            assembler=FFmpegMediaAssembler(),
+            metadata_builder=FFmpegMetadataBuilder(),
+            tracker=JsonProgressTracker(temp_dir),
+        )
+        output = use_case.execute(settings, temp_dir=temp_dir)
         print(f"\nSuccess! Audiobook saved to {output}")
+        if auto_created:
+            try:
+                shutil.rmtree(temp_dir)
+            except OSError as exc:
+                logging.warning("Could not remove temp dir %s: %s", temp_dir, exc)
         return 0
     except EpubListenerError as exc:
         logging.error("Build failed: %s", exc)
         print(f"Error: {exc}")
+        if auto_created:
+            print(f"Retry with: --resume-dir {temp_dir}")
         return 1
     except KeyboardInterrupt:
         logging.warning("Build interrupted by user.")
         print("\nInterrupted.")
+        if auto_created:
+            print(f"Resume with: --resume-dir {temp_dir}")
         return 130
 
 

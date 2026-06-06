@@ -1,6 +1,6 @@
 """TTS speed normalization utilities."""
 
-import re
+from epub_listener.domain.speed import is_valid_speed
 
 
 def normalize_edge_speed(speed: str) -> str:
@@ -10,9 +10,7 @@ def normalize_edge_speed(speed: str) -> str:
     Edge-TTS expects a single trailing percent (e.g. '+10%').
     """
     cleaned = speed.strip()
-    if not re.fullmatch(r"[+-]?\d+%", cleaned):
-        return "+0%"
-    return cleaned
+    return cleaned if is_valid_speed(cleaned) else "+0%"
 
 
 def edge_speed_to_multiplier(speed: str) -> float:
