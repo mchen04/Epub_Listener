@@ -1,19 +1,19 @@
 """Build audiobook use case — pure orchestration over ports."""
 
-import asyncio
 import logging
-from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
+from epub_listener.application.commands import BuildAudiobookCommand
 from epub_listener.application.ports import (
     ChapterParser,
     MediaAssembler,
     MetadataBuilder,
     ProgressTracker,
-    TTSProvider,
+    TTSBatchGenerator,
+    TTSJob,
+    TTSResult,
 )
-from epub_listener.config import Settings
-from epub_listener.domain.exceptions import EpubListenerError
+from epub_listener.domain.exceptions import EpubListenerError, TTSGenerationError
 from epub_listener.domain.models import AudiobookProject, AudioSegment, Chapter
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ class BuildAudiobookUseCase:
     def __init__(
         self,
         parser: ChapterParser,
-        tts: TTSProvider,
+        tts: TTSBatchGenerator,
         assembler: MediaAssembler,
         metadata_builder: MetadataBuilder,
         tracker: ProgressTracker,
@@ -36,14 +36,12 @@ class BuildAudiobookUseCase:
         self._metadata_builder = metadata_builder
         self._tracker = tracker
 
-    def execute(self, settings: Settings, *, temp_dir: Path) -> Path:
+    def execute(self, command: BuildAudiobookCommand) -> Path:
         """Run the full build pipeline.
 
         Args:
-            settings: Build configuration.
-            temp_dir: Directory for intermediate audio files and the progress
-                tracker state.  The caller owns this directory's lifecycle —
-                creation and cleanup happen outside this method.
+            command: Build command resolved by the composition root. The caller
+                owns the temp directory lifecycle.
 
         Returns:
             Path to the final audiobook MP3.
@@ -51,28 +49,33 @@ class BuildAudiobookUseCase:
         Raises:
             EpubListenerError: On any unrecoverable failure.
         """
-        output_path = settings.resolve_output_path()
+        output_path = command.output_path
         if output_path.suffix.lower() != ".mp3":
             raise EpubListenerError(f"Output file must end with .mp3 (got '{output_path.suffix}')")
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise EpubListenerError(
+                f"Could not prepare output directory {output_path.parent}: {exc}"
+            ) from exc
 
-        logger.info("Starting conversion for: %s", settings.input_epub)
+        logger.info("Starting conversion for: %s", command.input_epub)
 
         logger.info("Step 1/4: Parsing EPUB...")
-        chapters = self._parser.parse(settings.input_epub)
+        chapters = self._parser.parse(command.input_epub)
         if not chapters:
             raise EpubListenerError("No chapters found in the EPUB file.")
         logger.info("Found %d chapters.", len(chapters))
 
         project = AudiobookProject(
-            title=settings.input_epub.stem,
-            author=settings.author,
+            title=command.input_epub.stem,
+            author=command.author,
             chapters=chapters,
-            temp_dir=temp_dir,
+            temp_dir=command.temp_dir,
         )
 
         logger.info("Step 2/4: Generating chapter audio...")
-        segments = self._generate_audio(project, settings)
+        segments = self._generate_audio(project, command)
         if not segments:
             raise EpubListenerError("Failed to process any valid chapters.")
 
@@ -89,97 +92,68 @@ class BuildAudiobookUseCase:
         logger.info("Success! Audiobook saved to %s", output_path)
         return output_path
 
-    def _generate_audio(self, project: AudiobookProject, settings: Settings) -> list[AudioSegment]:
-        strategy = settings.concurrency
-        provider_strategy = self._tts.supports_concurrency()
-
-        if strategy in ("async", "parallel") and strategy != provider_strategy:
-            logger.warning(
-                "Provider does not support '%s' concurrency; falling back to sequential.",
-                strategy,
-            )
-            strategy = "sequential"
-
-        if strategy == "async":
-            return self._generate_async(project, settings)
-        if strategy == "parallel":
-            return self._generate_parallel(project, settings)
-        return self._generate_sequential(project, settings)
-
-    def _generate_sequential(
-        self, project: AudiobookProject, settings: Settings
+    def _generate_audio(
+        self, project: AudiobookProject, command: BuildAudiobookCommand
     ) -> list[AudioSegment]:
-        segments, pending = self._partition_pending(project)
-        for chapter in pending:
-            logger.info("  [a] Generating: %s", chapter.title)
-            audio_path = self._audio_path(chapter, project)
-            duration = self._tts.generate(
-                chapter.text, audio_path, settings.resolved_voice, settings.speed
-            )
-            seg = self._record_generated(chapter, audio_path, duration)
-            if seg:
-                segments.append(seg)
-        return segments
-
-    def _generate_async(self, project: AudiobookProject, settings: Settings) -> list[AudioSegment]:
-        segments, pending = self._partition_pending(project)
+        generation_key = command.generation_key
+        segments_by_chapter, pending = self._partition_pending(project, generation_key)
         if pending:
+            chapters_by_id = {chapter.id: chapter for chapter in pending}
+            recorded_chapter_ids: set[str] = set()
+            jobs = [
+                TTSJob(
+                    chapter_id=chapter.id,
+                    text=chapter.text,
+                    output=self._audio_path(chapter, project),
+                    voice=command.voice,
+                    speed=command.speed,
+                )
+                for chapter in pending
+            ]
 
-            async def _run() -> list[int]:
-                jobs = [
-                    (ch.text, self._audio_path(ch, project), settings.resolved_voice, settings.speed)
-                    for ch in pending
-                ]
-                return await self._tts.generate_many(jobs)
-
-            durations = asyncio.run(_run())
-            for chapter, duration in zip(pending, durations, strict=True):
-                seg = self._record_generated(chapter, self._audio_path(chapter, project), duration)
-                if seg:
-                    segments.append(seg)
-        return segments
-
-    def _generate_parallel(
-        self, project: AudiobookProject, settings: Settings
-    ) -> list[AudioSegment]:
-        segments, pending = self._partition_pending(project)
-        if pending:
-            with ProcessPoolExecutor(max_workers=settings.max_workers) as executor:
-                futures = {
-                    executor.submit(
-                        self._tts.generate,
-                        chapter.text,
-                        self._audio_path(chapter, project),
-                        settings.resolved_voice,
-                        settings.speed,
-                    ): chapter
-                    for chapter in pending
-                }
-                for future in futures:
-                    chapter = futures[future]
-                    try:
-                        duration = future.result()
-                    except Exception:
-                        logger.exception("Exception generating chapter %s", chapter.id)
-                        continue
-                    seg = self._record_generated(
-                        chapter, self._audio_path(chapter, project), duration
+            def record(result: TTSResult) -> None:
+                if result.chapter_id not in chapters_by_id:
+                    raise TTSGenerationError(
+                        f"TTS provider reported unknown chapter: {result.chapter_id}"
                     )
-                    if seg:
-                        segments.append(seg)
-        return segments
+                if result.chapter_id in recorded_chapter_ids:
+                    raise TTSGenerationError(
+                        f"TTS provider reported duplicate chapter: {result.chapter_id}"
+                    )
+                chapter = chapters_by_id[result.chapter_id]
+                output = self._audio_path(chapter, project)
+                segments_by_chapter[result.chapter_id] = self._record_generated(
+                    chapter,
+                    output,
+                    result,
+                    generation_key,
+                )
+                recorded_chapter_ids.add(result.chapter_id)
+
+            self._tts.generate_many(jobs, on_complete=record)
+            missing = [chapter.id for chapter in pending if chapter.id not in segments_by_chapter]
+            if missing:
+                raise TTSGenerationError(
+                    f"TTS provider did not produce audio for chapter(s): {', '.join(missing)}"
+                )
+
+        return [
+            segments_by_chapter[chapter.id]
+            for chapter in project.chapters
+            if chapter.id in segments_by_chapter
+        ]
 
     def _partition_pending(
-        self, project: AudiobookProject
-    ) -> tuple[list[AudioSegment], list[Chapter]]:
+        self, project: AudiobookProject, generation_key: str
+    ) -> tuple[dict[str, AudioSegment], list[Chapter]]:
         """Split chapters into cached segments (reused) and chapters needing generation."""
-        cached: list[AudioSegment] = []
+        cached: dict[str, AudioSegment] = {}
         pending: list[Chapter] = []
         for chapter in project.chapters:
-            seg = self._load_cached_segment(chapter, project)
+            seg = self._load_cached_segment(chapter, project, generation_key)
             if seg:
                 logger.info("  [-] Skipping (cached): %s", chapter.title)
-                cached.append(seg)
+                cached[chapter.id] = seg
             else:
                 pending.append(chapter)
         return cached, pending
@@ -189,10 +163,10 @@ class BuildAudiobookUseCase:
         return project.temp_dir / f"chap_{chapter.id}.mp3"
 
     def _load_cached_segment(
-        self, chapter: Chapter, project: AudiobookProject
+        self, chapter: Chapter, project: AudiobookProject, generation_key: str
     ) -> AudioSegment | None:
         """Return the already-generated segment for a chapter, or None if not cached."""
-        if not self._tracker.is_complete(chapter.id, chapter.checksum):
+        if not self._tracker.is_complete(chapter.id, chapter.checksum, generation_key):
             return None
         audio_path = self._audio_path(chapter, project)
         if not audio_path.exists() or audio_path.stat().st_size == 0:
@@ -203,11 +177,23 @@ class BuildAudiobookUseCase:
         return AudioSegment(path=audio_path, duration_ms=duration, chapter_id=chapter.id)
 
     def _record_generated(
-        self, chapter: Chapter, audio_path: Path, duration: int
-    ) -> AudioSegment | None:
-        """Persist a freshly generated chapter and return its segment, or None on failure."""
-        if duration <= 0 or not audio_path.exists():
-            logger.warning("Failed to generate audio for chapter %s", chapter.id)
-            return None
-        self._tracker.mark_complete(chapter.id, chapter.checksum, duration)
-        return AudioSegment(path=audio_path, duration_ms=duration, chapter_id=chapter.id)
+        self,
+        chapter: Chapter,
+        output: Path,
+        result: TTSResult,
+        generation_key: str,
+    ) -> AudioSegment:
+        """Persist a freshly generated chapter and return its segment."""
+        if result.duration_ms <= 0 or not output.exists() or output.stat().st_size == 0:
+            raise TTSGenerationError(f"Failed to generate audio for chapter {chapter.id}")
+        self._tracker.mark_complete(
+            chapter.id,
+            chapter.checksum,
+            result.duration_ms,
+            generation_key,
+        )
+        return AudioSegment(
+            path=output,
+            duration_ms=result.duration_ms,
+            chapter_id=chapter.id,
+        )

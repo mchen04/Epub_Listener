@@ -7,7 +7,7 @@ Convert any standard `.epub` file into a fully narrated `.mp3` audiobook with sk
 - **MP3 with Chapters**: Embedded ID3 chapter metadata for skip-to-chapter support in VLC, QuickTime, etc.
 - **Customizable Speed & Voice**: CLI flags for playback speed and voice selection.
 - **Resume Support**: Checksum-based resume prevents re-generating completed chapters.
-- **Concurrent Generation**: Async I/O for Edge-TTS, process pool for Kokoro.
+- **Concurrent Generation**: Shared batch runners drive async Edge-TTS and process-pooled Kokoro generation, with resume progress saved after each completed chapter.
 
 ## Prerequisites
 - **Python 3.10+**

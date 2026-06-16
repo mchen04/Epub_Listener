@@ -3,7 +3,11 @@
 import argparse
 from pathlib import Path
 
+from pydantic import ValidationError
+
+from epub_listener.concurrency import CONCURRENCY_CHOICES
 from epub_listener.config import Settings
+from epub_listener.domain.exceptions import ConfigurationError
 
 
 def parse_args() -> Settings:
@@ -64,15 +68,15 @@ def parse_args() -> Settings:
     )
     parser.add_argument(
         "--concurrency",
-        choices=["sequential", "async", "parallel"],
+        choices=CONCURRENCY_CHOICES,
         default=argparse.SUPPRESS,
-        help="Concurrency strategy (default: async)",
+        help="Concurrency strategy (default: auto)",
     )
     parser.add_argument(
         "--max-workers",
         type=int,
         default=argparse.SUPPRESS,
-        help="Max workers for parallel generation (default: 4)",
+        help="Max concurrent TTS jobs (default: 4)",
     )
     parser.add_argument(
         "--log-level",
@@ -82,4 +86,16 @@ def parse_args() -> Settings:
     )
 
     ns = parser.parse_args()
-    return Settings(**vars(ns))
+    try:
+        return Settings(**vars(ns))
+    except ValidationError as exc:
+        raise ConfigurationError(f"Invalid configuration: {_format_validation_error(exc)}") from exc
+
+
+def _format_validation_error(exc: ValidationError) -> str:
+    messages: list[str] = []
+    for error in exc.errors():
+        location = ".".join(str(part) for part in error["loc"])
+        message = str(error["msg"]).removeprefix("Value error, ")
+        messages.append(f"{location}: {message}")
+    return "; ".join(messages)

@@ -2,84 +2,97 @@
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 import edge_tts
 
-from epub_listener.application.ports import ConcurrencyStrategy, TTSProvider
+from epub_listener.application.ports import (
+    GenerationCallback,
+    TTSJob,
+)
 from epub_listener.domain.exceptions import TTSGenerationError
 from epub_listener.infrastructure.tts.base import normalize_edge_speed
-from epub_listener.infrastructure.utils.audio_probe import get_audio_duration_ms
+from epub_listener.infrastructure.tts.batch import run_async_safely, run_bounded_async
+from epub_listener.infrastructure.tts.finalize import commit_generated_mp3
+from epub_listener.infrastructure.tts.ports import TTSProvider
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_VOICE = "en-US-AriaNeural"
+DEFAULT_EDGE_TTS_TIMEOUT_SECONDS = 300
 
 
 class EdgeTTSProvider(TTSProvider):
     """Generates audio using Microsoft Edge TTS (cloud/Azure voices)."""
 
-    def __init__(self, max_concurrent: int = 5) -> None:
-        self._semaphore = asyncio.Semaphore(max_concurrent)
-
-    def supports_concurrency(self) -> ConcurrencyStrategy:
-        return "async"
+    def __init__(self, timeout_seconds: float = DEFAULT_EDGE_TTS_TIMEOUT_SECONDS) -> None:
+        self.timeout_seconds = timeout_seconds
 
     def generate(self, text: str, output: Path, voice: str | None, speed: str) -> int:
         """Generate audio and return duration in ms."""
-        voice = voice or DEFAULT_VOICE
-        rate = normalize_edge_speed(speed)
+        return run_async_safely(self.generate_job(TTSJob("_single", text, output, voice, speed)))
+
+    async def generate_job(self, job: TTSJob) -> int:
+        voice = job.voice or DEFAULT_VOICE
+        rate = normalize_edge_speed(job.speed)
+        tmp_output = job.output.with_name(f".{job.output.stem}.tmp{job.output.suffix}")
         try:
-            asyncio.run(self._generate_async(text, str(output), voice, rate))
-            if output.exists():
-                return get_audio_duration_ms(output)
+            tmp_output.unlink(missing_ok=True)
+            await self._generate_async(job.text, str(tmp_output), voice, rate)
+            return commit_generated_mp3(tmp_output, job.output)
+        except TimeoutError as exc:
+            logger.error("Edge-TTS timed out after %ss for %s", self.timeout_seconds, job.output)
+            raise TTSGenerationError(
+                f"Edge-TTS timed out after {self.timeout_seconds:g}s for {job.output}"
+            ) from exc
         except ConnectionError as exc:
-            logger.error("Edge-TTS connection error for %s: %s", output, exc)
+            logger.error("Edge-TTS connection error for %s: %s", job.output, exc)
             raise TTSGenerationError(f"Edge-TTS connection error: {exc}") from exc
         except OSError as exc:
-            logger.error("Edge-TTS OS error for %s: %s", output, exc)
+            logger.error("Edge-TTS OS error for %s: %s", job.output, exc)
             raise TTSGenerationError(f"Edge-TTS OS error: {exc}") from exc
+        except TTSGenerationError:
+            raise
         except Exception as exc:
-            logger.error("Edge-TTS error for %s: %s", output, exc)
+            logger.error("Edge-TTS error for %s: %s", job.output, exc)
             raise TTSGenerationError(f"Edge-TTS error: {exc}") from exc
-        return 0
+        finally:
+            tmp_output.unlink(missing_ok=True)
 
-    async def _generate_async(self, text: str, output_file: str, voice: str, rate: str) -> None:
-        async with self._semaphore:
-            communicate = edge_tts.Communicate(text, voice, rate=rate)
-            await communicate.save(output_file)
-
-    async def generate_many(
+    async def _generate_async(
         self,
-        jobs: list[tuple[str, Path, str | None, str]],
-    ) -> list[int]:
-        """Concurrent generation for multiple chapters.
+        text: str,
+        output_file: str,
+        voice: str,
+        rate: str,
+    ) -> None:
+        communicate = edge_tts.Communicate(text, voice, rate=rate)
+        save_task = asyncio.create_task(communicate.save(output_file))
+        done, _ = await asyncio.wait((save_task,), timeout=self.timeout_seconds)
+        if not done:
+            save_task.cancel()
+            raise TimeoutError
+        await save_task
 
-        Args:
-            jobs: List of (text, output, voice, speed) tuples.
 
-        Returns:
-            List of durations in ms (0 for failures).
-        """
-        tasks = [
-            asyncio.create_task(self._generate_one_safe(text, out, voice, speed))
-            for text, out, voice, speed in jobs
-        ]
-        return await asyncio.gather(*tasks)
+class EdgeAsyncTTSBatchGenerator:
+    """Runs Edge jobs concurrently through the shared async batch policy."""
 
-    async def _generate_one_safe(
-        self, text: str, output: Path, voice: str | None, speed: str
-    ) -> int:
-        """Generate one chapter inside the shared event loop.
+    def __init__(self, provider: EdgeTTSProvider, max_concurrent: int = 5) -> None:
+        self.max_concurrent = max(1, max_concurrent)
+        self.provider = provider
 
-        Awaits the async core directly rather than going through the synchronous
-        ``generate()``, which would nest ``asyncio.run()`` inside the running loop.
-        """
-        voice = voice or DEFAULT_VOICE
-        rate = normalize_edge_speed(speed)
-        try:
-            await self._generate_async(text, str(output), voice, rate)
-            return get_audio_duration_ms(output) if output.exists() else 0
-        except Exception as exc:
-            logger.error("Edge-TTS error for %s: %s", output, exc)
-            return 0
+    def generate_many(
+        self,
+        jobs: Sequence[TTSJob],
+        on_complete: GenerationCallback,
+    ) -> None:
+        run_async_safely(
+            run_bounded_async(
+                jobs,
+                max_active=self.max_concurrent,
+                start=self.provider.generate_job,
+                on_complete=on_complete,
+            )
+        )

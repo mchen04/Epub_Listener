@@ -1,11 +1,29 @@
 """Application ports (abstract interfaces)."""
 
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Protocol
 
 from epub_listener.domain.models import AudioSegment, Chapter
 
-ConcurrencyStrategy = Literal["sequential", "async", "parallel"]
+
+@dataclass(frozen=True)
+class TTSJob:
+    chapter_id: str
+    text: str
+    output: Path
+    voice: str | None
+    speed: str
+
+
+@dataclass(frozen=True)
+class TTSResult:
+    chapter_id: str
+    duration_ms: int
+
+
+GenerationCallback = Callable[[TTSResult], None]
 
 
 class ChapterParser(Protocol):
@@ -16,27 +34,24 @@ class ChapterParser(Protocol):
         ...
 
 
-class TTSProvider(Protocol):
-    """Generates audio from text."""
+class TTSBatchGenerator(Protocol):
+    """Generates a batch of TTS jobs and reports durable completions serially."""
 
-    def generate(self, text: str, output: Path, voice: str | None, speed: str) -> int:
-        """Generate audio and return duration in milliseconds, or 0 on failure."""
-        ...
-
-    def supports_concurrency(self) -> ConcurrencyStrategy:
-        """Return the concurrency strategy this provider supports."""
-        ...
-
-    async def generate_many(
+    def generate_many(
         self,
-        jobs: list[tuple[str, Path, str | None, str]],
-    ) -> list[int]:
-        """Generate audio for many chapters concurrently, returning per-job durations.
+        jobs: Sequence[TTSJob],
+        on_complete: GenerationCallback,
+    ) -> None:
+        """Generate many chapters and report each completed file.
 
-        Only providers that report ``supports_concurrency() == "async"`` need to
-        implement this; the default raises for everyone else.
+        Implementations call ``on_complete`` serially after each durable output
+        is written and its final duration is known. Any generation or callback
+        failure aborts the batch and is propagated; callers must not assume a
+        partial audiobook can be assembled after a failed batch. Each submitted
+        chapter may be reported at most once, and results must reference a
+        submitted chapter id.
         """
-        raise NotImplementedError
+        ...
 
 
 class MediaAssembler(Protocol):
@@ -70,7 +85,12 @@ class MetadataBuilder(Protocol):
 class ProgressTracker(Protocol):
     """Tracks which chapters have already been processed."""
 
-    def is_complete(self, chapter_id: str, checksum: str) -> bool:
+    def is_complete(
+        self,
+        chapter_id: str,
+        checksum: str,
+        generation_key: str | None = None,
+    ) -> bool:
         """Check if a chapter with this checksum is already complete."""
         ...
 
@@ -78,6 +98,12 @@ class ProgressTracker(Protocol):
         """Return the recorded audio duration for a completed chapter, or 0 if unknown."""
         ...
 
-    def mark_complete(self, chapter_id: str, checksum: str, duration_ms: int) -> None:
+    def mark_complete(
+        self,
+        chapter_id: str,
+        checksum: str,
+        duration_ms: int,
+        generation_key: str | None = None,
+    ) -> None:
         """Mark a chapter complete and durably record its generated audio duration."""
         ...

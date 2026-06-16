@@ -16,7 +16,7 @@ python -m epub_listener my_book.epub --resume-dir /tmp/epub_audiobook_abc123
 
 The progress tracker uses **SHA-256 checksums** of chapter text. If the EPUB content changed between runs (e.g., re-downloaded with different formatting), affected chapters are regenerated automatically.
 
-**Note**: On a successful build, the temp dir is deleted. Only interrupted/failed builds preserve it.
+**Note**: On a successful fresh build, the auto-created temp dir is deleted. Interrupted/failed fresh builds preserve it, and user-supplied resume dirs are never deleted by the program.
 
 ## FFmpeg Not Found
 
@@ -31,7 +31,7 @@ macOS: `brew install ffmpeg`
 
 ## Kokoro OOM / Slow
 
-Kokoro is CPU/GPU intensive. Reduce `--max-workers` (default: 4) or use `--concurrency sequential`.
+Kokoro is CPU/GPU intensive. It uses process-local model caches in parallel mode. Reduce `--max-workers` (default: 4) or use `--concurrency sequential`.
 
 ```bash
 python -m epub_listener book.epub --use-kokoro --max-workers 1 --concurrency sequential
@@ -39,7 +39,7 @@ python -m epub_listener book.epub --use-kokoro --max-workers 1 --concurrency seq
 
 ## Edge-TTS Connection Errors
 
-Edge-TTS requires an internet connection. If you hit rate limits, the provider automatically retries with backoff. Reduce concurrency with `--max-workers` if needed.
+Edge-TTS requires an internet connection. If you hit rate limits or transient service errors, reduce async concurrency with `--max-workers`.
 
 ## Output MP3 Has No Chapters
 

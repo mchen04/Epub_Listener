@@ -19,30 +19,30 @@ ruff check epub_listener/
 
 # Type check
 mypy epub_listener/
+
+# Live TTS/network smoke tests
+pytest -m live
 ```
 
 ## Adding a New TTS Provider
 
 1. Create `epub_listener/infrastructure/tts/my_tts.py`.
-2. Implement the `TTSProvider` Protocol from `epub_listener/application/ports.py`.
-3. Wire it in `epub_listener/__main__.py`.
+2. Implement the `TTSProvider` Protocol from `epub_listener/infrastructure/tts/ports.py`.
+3. Register it through `create_tts_batch_generator()` in `epub_listener/infrastructure/tts/factory.py`.
 
 ```python
 from pathlib import Path
-from epub_listener.application.ports import ConcurrencyStrategy
+from epub_listener.infrastructure.tts.ports import TTSProvider
 
-class MyTTSProvider:
+class MyTTSProvider(TTSProvider):
     def generate(self, text: str, output: Path, voice: str | None, speed: str) -> int:
-        """Return duration in ms, or 0 on failure (do not raise for per-chapter errors)."""
+        """Generate one file and return its positive duration in milliseconds."""
         ...
-
-    def supports_concurrency(self) -> ConcurrencyStrategy:
-        return "sequential"
 ```
 
-`generate()` should return `0` on per-chapter failure so the orchestrator can skip that chapter and continue building. Only raise for unrecoverable errors (missing binary, invalid auth, etc.).
+Providers only write one requested output file. Batch execution, callback ordering, cancellation, and failure-wave behavior belong in a `TTSBatchGenerator` adapter that reuses the shared helpers in `epub_listener/infrastructure/tts/batch.py`. Raise `TTSGenerationError` on any failed chapter; the application fails the build instead of emitting a partial audiobook.
 
-The `execute()` signature is `use_case.execute(settings, *, temp_dir=temp_dir)`. If you call `BuildAudiobookUseCase` directly (e.g., in tests), pass the same `temp_dir` to both `JsonProgressTracker` and `execute()` so cached audio and tracker state are co-located.
+The `execute()` signature is `use_case.execute(command)`, where `command` is a `BuildAudiobookCommand`. In the CLI composition root, `BuildWorkspace` creates both the command and tracker to keep cached audio and tracker state co-located. If you call `BuildAudiobookUseCase` directly, preserve that same-directory invariant.
 
 ## Adding a New Scraper
 

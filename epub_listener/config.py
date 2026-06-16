@@ -5,7 +5,7 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from epub_listener.application.ports import ConcurrencyStrategy
+from epub_listener.concurrency import ConcurrencyStrategy
 from epub_listener.domain.sanitize import sanitize_filename
 from epub_listener.domain.speed import is_valid_speed
 
@@ -31,10 +31,8 @@ class Settings(BaseSettings):
     resume_dir: Path | None = Field(default=None, description="Directory to resume from")
     use_kokoro: bool = Field(default=False, description="Use local Kokoro TTS")
     kokoro_voice: str | None = Field(default=None, description="Kokoro voice identifier")
-    concurrency: ConcurrencyStrategy = Field(
-        default="async", description="Concurrency strategy"
-    )
-    max_workers: int = Field(default=4, description="Max workers for parallel generation")
+    concurrency: ConcurrencyStrategy = Field(default="auto", description="Concurrency strategy")
+    max_workers: int = Field(default=4, description="Maximum concurrent TTS jobs")
     log_level: str = Field(default="INFO", description="Logging level")
 
     @field_validator("speed")
@@ -51,10 +49,22 @@ class Settings(BaseSettings):
             raise ValueError(f"Input file not found: {v}")
         return v
 
+    @field_validator("max_workers")
+    @classmethod
+    def validate_max_workers(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("max_workers must be at least 1")
+        return v
+
     @property
     def resolved_voice(self) -> str | None:
         """The voice to use for the active TTS backend."""
         return self.kokoro_voice if self.use_kokoro else self.voice
+
+    @property
+    def tts_backend(self) -> str:
+        """The active TTS backend identifier used for resume cache compatibility."""
+        return "kokoro" if self.use_kokoro else "edge"
 
     def resolve_output_path(self) -> Path:
         """Determine the final output path from an explicit path or an auto-generated name.

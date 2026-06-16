@@ -5,11 +5,13 @@ import html
 import logging
 import sys
 import time
+from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
 from ebooklib import epub
 
+from epub_listener.infrastructure.utils.durable_file import durably_replace
 from epub_listener.scrapers.base import NovelScraper
 
 logger = logging.getLogger(__name__)
@@ -24,19 +26,32 @@ HEADERS = {
 }
 
 
+class ScrapeError(RuntimeError):
+    """Expected scraper failure caused by remote content or extraction shape."""
+
+
 class WormScraper(NovelScraper):
     """Scrapes Worm from parahumans.wordpress.com into an EPUB."""
 
-    def __init__(self, delay: float = 1.5, start: int = 0, end: int | None = None) -> None:
+    def __init__(
+        self,
+        delay: float = 1.5,
+        start: int = 0,
+        end: int | None = None,
+        allow_partial: bool = False,
+    ) -> None:
         self.delay = delay
         self.start = start
         self.end = end
+        self.allow_partial = allow_partial
 
     def scrape(self, output_path: str) -> None:
         """Scrape Worm and save as EPUB.
 
         Raises:
             ValueError: If the selected chapter range is empty.
+            ScrapeError: If a chapter cannot be fetched or extracted and
+                ``allow_partial`` is false.
         """
         with requests.Session() as session:
             all_links = self._get_chapter_links(session)
@@ -52,8 +67,10 @@ class WormScraper(NovelScraper):
                 try:
                     body = self._fetch_chapter_html(url, session)
                     chapters.append((title, body))
-                except Exception as exc:
+                except (requests.RequestException, ScrapeError) as exc:
                     logger.warning("Failed to fetch %s: %s", url, exc)
+                    if not self.allow_partial:
+                        raise ScrapeError(f"Failed to fetch {title} ({url}): {exc}") from exc
                     chapters.append((title, f"<p>[Failed to fetch: {html.escape(str(exc))}]</p>"))
                 if i < len(links) - 1:
                     time.sleep(self.delay)
@@ -62,13 +79,16 @@ class WormScraper(NovelScraper):
 
     def _get_chapter_links(self, session: requests.Session) -> list[tuple[str, str]]:
         logger.info("Fetching table of contents from %s", TOC_URL)
-        resp = session.get(TOC_URL, headers=HEADERS, timeout=30)
-        resp.raise_for_status()
+        try:
+            resp = session.get(TOC_URL, headers=HEADERS, timeout=30)
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            raise ScrapeError(f"Failed to fetch table of contents ({TOC_URL}): {exc}") from exc
         soup = BeautifulSoup(resp.text, "html.parser")
 
         content = soup.select_one(".entry-content")
         if not content:
-            raise RuntimeError("Could not find .entry-content on ToC page.")
+            raise ScrapeError("Could not find .entry-content on ToC page.")
 
         links: list[tuple[str, str]] = []
         for a in content.find_all("a", href=True):
@@ -100,7 +120,7 @@ class WormScraper(NovelScraper):
     def _extract_chapter_html(self, soup: BeautifulSoup) -> str:
         content = soup.select_one(".entry-content")
         if not content:
-            return "<p>[Could not extract content]</p>"
+            raise ScrapeError("Could not find .entry-content on chapter page.")
 
         for p in content.find_all("p"):
             text = p.get_text(strip=True)
@@ -129,6 +149,8 @@ class WormScraper(NovelScraper):
         return str(content)
 
     def _build_epub(self, chapters: list[tuple[str, str]], output_path: str) -> None:
+        output = Path(output_path)
+        tmp_output = output.with_name(f".{output.stem}.tmp{output.suffix}")
         book = epub.EpubBook()
         book.set_identifier("worm-wildbow")
         book.set_title("Worm")
@@ -151,8 +173,15 @@ class WormScraper(NovelScraper):
         book.spine = spine
         book.add_item(epub.EpubNcx())
         book.add_item(epub.EpubNav())
-        epub.write_epub(output_path, book)
-        logger.info("Saved EPUB to: %s", output_path)
+        try:
+            tmp_output.unlink(missing_ok=True)
+            epub.write_epub(str(tmp_output), book)
+            durably_replace(tmp_output, output)
+        except OSError as exc:
+            raise ScrapeError(f"Failed to write EPUB {output}: {exc}") from exc
+        finally:
+            tmp_output.unlink(missing_ok=True)
+        logger.info("Saved EPUB to: %s", output)
 
 
 def main() -> None:
@@ -161,12 +190,22 @@ def main() -> None:
     parser.add_argument("--delay", type=float, default=1.5, help="Delay between requests (s)")
     parser.add_argument("--start", type=int, default=0, help="First chapter index (0-based)")
     parser.add_argument("--end", type=int, default=None, help="Chapter index to stop before")
+    parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="Write an EPUB with placeholders for chapters that fail to fetch",
+    )
     args = parser.parse_args()
 
-    scraper = WormScraper(delay=args.delay, start=args.start, end=args.end)
+    scraper = WormScraper(
+        delay=args.delay,
+        start=args.start,
+        end=args.end,
+        allow_partial=args.allow_partial,
+    )
     try:
         scraper.scrape(args.output)
-    except ValueError as exc:
+    except (ScrapeError, ValueError) as exc:
         logger.error("%s", exc)
         sys.exit(1)
 
