@@ -111,6 +111,40 @@ def test_assembler_uses_ffconcat_escape_for_apostrophe_paths(
     )
 
 
+def test_assembler_writes_absolute_segment_paths_for_concat_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    segment_path = Path("relative-cache/chapter.mp3")
+    output = tmp_path / "book.mp3"
+    concat_contents = ""
+
+    def fake_run_ffmpeg(*args: object, **kwargs: object) -> None:
+        nonlocal concat_contents
+        concat_arg = args[5]
+        target_arg = args[-1]
+        assert isinstance(concat_arg, Path)
+        assert isinstance(target_arg, Path)
+        concat_contents = concat_arg.read_text(encoding="utf-8")
+        target_arg.write_bytes(b"new")
+
+    monkeypatch.setattr(ffmpeg_assembler, "run_ffmpeg", fake_run_ffmpeg)
+    monkeypatch.setattr(ffmpeg_assembler, "get_audio_duration_ms", lambda path: 1000)
+    monkeypatch.setattr(
+        ffmpeg_assembler,
+        "durably_replace",
+        lambda source, target: target.write_bytes(source.read_bytes()),
+    )
+
+    FFmpegMediaAssembler().assemble(
+        [AudioSegment(segment_path, duration_ms=1000, chapter_id="0000")],
+        _metadata(tmp_path),
+        output,
+    )
+
+    assert concat_contents == f"file '{_escape_ffconcat_path(segment_path.resolve())}'\n"
+
+
 def test_assembler_wraps_concat_list_write_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -38,7 +38,7 @@ class FFmpegMediaAssembler(MediaAssembler):
                 tmp_output.unlink(missing_ok=True)
                 with open(concat_list, "w", encoding="utf-8") as f:
                     for seg in segments:
-                        f.write(f"file '{_escape_ffconcat_path(seg.path)}'\n")
+                        f.write(f"file '{_escape_ffconcat_path(seg.path.resolve())}'\n")
             except OSError as exc:
                 raise AssemblyError(f"Could not prepare concat list {concat_list}: {exc}") from exc
 
