@@ -1,7 +1,9 @@
 """Kokoro-82M local TTS provider."""
 
 import logging
+import os
 import time
+import warnings
 from collections.abc import Sequence
 from concurrent.futures import Future, ProcessPoolExecutor
 from multiprocessing import Manager
@@ -15,7 +17,10 @@ from epub_listener.application.ports import (
     TTSJob,
 )
 from epub_listener.domain.exceptions import TTSGenerationError
-from epub_listener.infrastructure.tts.base import edge_speed_to_multiplier
+from epub_listener.infrastructure.tts.base import (
+    edge_speed_to_multiplier,
+    infer_kokoro_lang_for_voice,
+)
 from epub_listener.infrastructure.tts.batch import run_bounded_futures
 from epub_listener.infrastructure.tts.finalize import commit_generated_mp3
 from epub_listener.infrastructure.tts.ports import TTSProvider
@@ -24,31 +29,71 @@ from epub_listener.infrastructure.utils.ffmpeg_runner import run_ffmpeg
 logger = logging.getLogger(__name__)
 
 DEFAULT_VOICE = "af_heart"
-DEFAULT_LANG = "a"
 SAMPLE_RATE = 24000
 PROCESS_POOL_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 PROCESS_POOL_TERMINATE_TIMEOUT_SECONDS = 1.0
 KOKORO_JOB_TIMEOUT_SECONDS = 7200.0
 
-_PIPELINES: dict[str, Any] = {}
-
-
-def _infer_lang_for_voice(voice: str) -> str:
-    if voice.startswith("b"):
-        return "b"
-    return DEFAULT_LANG
+_PIPELINES: dict[tuple[str, str], Any] = {}
+_WORKER_DEVICE = "cpu"
 
 
 def _get_pipeline(lang_code: str) -> Any:
-    if lang_code not in _PIPELINES:
+    key = (lang_code, _WORKER_DEVICE)
+    if key not in _PIPELINES:
         try:
-            from kokoro import KPipeline
+            from kokoro import KModel, KPipeline
         except ImportError as exc:
             raise TTSGenerationError(
                 "Kokoro is not installed. Run: pip install kokoro>=0.9.4 soundfile"
             ) from exc
-        _PIPELINES[lang_code] = KPipeline(lang_code=lang_code)
-    return _PIPELINES[lang_code]
+        if _WORKER_DEVICE == "mps":
+            try:
+                import torch
+
+                if not torch.backends.mps.is_available():
+                    raise TTSGenerationError("Kokoro MPS worker requested but MPS is unavailable")
+                model = KModel(repo_id="hexgrad/Kokoro-82M").to("mps").eval()
+                pipeline = KPipeline(
+                    lang_code=lang_code,
+                    repo_id="hexgrad/Kokoro-82M",
+                    model=model,
+                )
+            except TTSGenerationError:
+                raise
+            except Exception as exc:
+                raise TTSGenerationError(f"Could not initialize Kokoro on MPS: {exc}") from exc
+        else:
+            pipeline = KPipeline(
+                lang_code=lang_code,
+                repo_id="hexgrad/Kokoro-82M",
+                device="cpu",
+            )
+        _PIPELINES[key] = pipeline
+    return _PIPELINES[key]
+
+
+def _initialize_hybrid_worker(counter: Any, lock: Any, torch_threads: int) -> None:
+    """Permanently bind one spawned worker to MPS and the other to CPU."""
+    global _WORKER_DEVICE
+    with lock:
+        worker_index = int(counter.value)
+        counter.value = worker_index + 1
+    _WORKER_DEVICE = "mps" if worker_index == 0 else "cpu"
+
+    # PyTorch 2.12's native MPS STFT is correct but emits a deprecation
+    # warning whose text includes the dynamic tensor shape, defeating the
+    # default once-per-location filter and flooding long audiobook logs.
+    warnings.filterwarnings(
+        "ignore",
+        message=r"An output with one or more elements was resized since it had shape.*",
+        category=UserWarning,
+    )
+
+    import torch
+
+    torch.set_num_threads(max(1, torch_threads))
+    torch.set_num_interop_threads(1)
 
 
 def _cancelled(cancel_event: Any | None) -> bool:
@@ -67,7 +112,7 @@ def _generate_kokoro_job(job: TTSJob, cancel_event: Any | None = None) -> int:
     if _cancelled(cancel_event):
         raise TTSGenerationError("Kokoro batch cancelled")
     voice = job.voice or DEFAULT_VOICE
-    lang = _infer_lang_for_voice(voice)
+    lang = infer_kokoro_lang_for_voice(voice)
     tmp_wav_path = _tmp_wav_path(job)
     tmp_output = _tmp_output_path(job)
     try:
@@ -192,8 +237,12 @@ class KokoroTTSProvider(TTSProvider):
 class KokoroParallelTTSBatchGenerator:
     """Runs Kokoro jobs in processes through the shared future batch policy."""
 
-    def __init__(self, max_workers: int = 4) -> None:
-        self.max_workers = max(1, max_workers)
+    def __init__(self, max_workers: int = 4, *, hybrid_mps: bool = False) -> None:
+        self.hybrid_mps = hybrid_mps
+        # The tuned hybrid topology is exactly one native-MPS worker and one
+        # internally multithreaded CPU worker. Additional model copies reduce
+        # throughput on unified-memory Apple Silicon.
+        self.max_workers = 2 if hybrid_mps else max(1, max_workers)
 
     def generate_many(
         self,
@@ -209,7 +258,16 @@ class KokoroParallelTTSBatchGenerator:
 
         try:
             cancel_event = manager.Event()
-            executor = ProcessPoolExecutor(max_workers=self.max_workers)
+            if self.hybrid_mps:
+                device_counter = manager.Value("i", 0)
+                device_lock = manager.Lock()
+                executor = ProcessPoolExecutor(
+                    max_workers=self.max_workers,
+                    initializer=_initialize_hybrid_worker,
+                    initargs=(device_counter, device_lock, os.cpu_count() or 1),
+                )
+            else:
+                executor = ProcessPoolExecutor(max_workers=self.max_workers)
 
             def submit(job: TTSJob) -> Future[int]:
                 assert executor is not None

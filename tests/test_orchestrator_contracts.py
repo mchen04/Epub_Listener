@@ -36,6 +36,10 @@ class CapturingAssembler:
 
 
 class MetadataWriter:
+    def __init__(self) -> None:
+        self.book_title: str | None = None
+        self.book_author: str | None = None
+
     def build(
         self,
         segments: list[AudioSegment],
@@ -44,6 +48,8 @@ class MetadataWriter:
         book_author: str,
         output: Path,
     ) -> None:
+        self.book_title = book_title
+        self.book_author = book_author
         output.write_text("metadata", encoding="utf-8")
 
 
@@ -177,6 +183,33 @@ def test_use_case_assembles_in_chapter_order_after_out_of_order_completion(tmp_p
     assert output.exists()
     assert assembler.chapter_ids == ["0000", "0001", "0002"]
     assert all(tracker.is_complete(chapter.id, chapter.checksum) for chapter in chapters)
+
+
+def test_use_case_uses_explicit_audiobook_title_for_metadata(tmp_path: Path) -> None:
+    chapter = Chapter("0000", "One", "one " * 50)
+    metadata = MetadataWriter()
+    command = _command(tmp_path)
+    command = BuildAudiobookCommand(
+        input_epub=command.input_epub,
+        output_path=command.output_path,
+        author=command.author,
+        voice=command.voice,
+        speed=command.speed,
+        temp_dir=command.temp_dir,
+        title="Reverend Insanity",
+    )
+    use_case = BuildAudiobookUseCase(
+        parser=StaticParser([chapter]),
+        tts=WritingBatchGenerator(),
+        assembler=CapturingAssembler(),
+        metadata_builder=metadata,
+        tracker=JsonProgressTracker(tmp_path / "work"),
+    )
+
+    use_case.execute(command)
+
+    assert metadata.book_title == "Reverend Insanity"
+    assert metadata.book_author == "Author"
 
 
 def test_use_case_wraps_output_directory_creation_failure(tmp_path: Path) -> None:

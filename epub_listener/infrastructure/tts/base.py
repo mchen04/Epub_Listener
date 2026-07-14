@@ -3,6 +3,11 @@
 from epub_listener.domain.speed import is_valid_speed
 
 
+def infer_kokoro_lang_for_voice(voice: str) -> str:
+    """Return Kokoro's English language code for a voice identifier."""
+    return "b" if voice.startswith("b") else "a"
+
+
 def normalize_edge_speed(speed: str) -> str:
     """Validate and return an Edge-TTS rate string.
 

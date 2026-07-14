@@ -22,6 +22,9 @@ cd Epub_Listener
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+
+# Optional: Apple-Silicon-optimized Kokoro inference
+pip install '.[mlx]'
 ```
 
 ## Usage
@@ -35,6 +38,16 @@ python -m epub_listener my_book.epub --voice en-GB-RyanNeural --speed +15%
 
 # Use local Kokoro TTS
 python -m epub_listener my_book.epub --use-kokoro --kokoro-voice af_heart
+
+# Tune Kokoro for Apple Silicon with one MPS and one CPU worker
+python -m epub_listener my_book.epub --use-kokoro --kokoro-hybrid-mps
+
+# Faster Kokoro inference on Apple Silicon (same voices, sequential MLX execution)
+python -m epub_listener my_book.epub --use-kokoro --kokoro-mlx \
+  --kokoro-voice af_heart --concurrency sequential
+
+# Override title and author metadata
+python -m epub_listener my_book.epub --title "My Book" --author "Author Name"
 
 # Resume an interrupted build (path is printed on interrupt/failure)
 python -m epub_listener my_book.epub --resume-dir /tmp/epub_audiobook_xxx

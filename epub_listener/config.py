@@ -28,9 +28,18 @@ class Settings(BaseSettings):
     speed: str = Field(default="+0%", description="Playback speed modifier (e.g., +10%, -20%)")
     voice: str | None = Field(default=None, description="Edge-TTS voice identifier")
     author: str = Field(default="Michael Chen", description="Audiobook author metadata")
+    title: str | None = Field(default=None, description="Audiobook title metadata override")
     resume_dir: Path | None = Field(default=None, description="Directory to resume from")
     use_kokoro: bool = Field(default=False, description="Use local Kokoro TTS")
     kokoro_voice: str | None = Field(default=None, description="Kokoro voice identifier")
+    kokoro_hybrid_mps: bool = Field(
+        default=False,
+        description="Use one Apple MPS and one CPU Kokoro worker",
+    )
+    kokoro_mlx: bool = Field(
+        default=False,
+        description="Use Apple MLX Kokoro inference",
+    )
     concurrency: ConcurrencyStrategy = Field(default="auto", description="Concurrency strategy")
     max_workers: int = Field(default=4, description="Maximum concurrent TTS jobs")
     log_level: str = Field(default="INFO", description="Logging level")
@@ -64,6 +73,8 @@ class Settings(BaseSettings):
     @property
     def tts_backend(self) -> str:
         """The active TTS backend identifier used for resume cache compatibility."""
+        if self.use_kokoro and self.kokoro_mlx:
+            return "kokoro-mlx-gain+2.7db"
         return "kokoro" if self.use_kokoro else "edge"
 
     def resolve_output_path(self) -> Path:

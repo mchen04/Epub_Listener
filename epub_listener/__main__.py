@@ -41,6 +41,7 @@ class BuildWorkspace:
             voice=voice,
             speed=settings.speed,
             temp_dir=self.path,
+            title=settings.title,
             tts_backend=settings.tts_backend,
         )
 
@@ -114,6 +115,8 @@ def main() -> int:
             use_kokoro=settings.use_kokoro,
             concurrency=settings.concurrency,
             max_workers=settings.max_workers,
+            kokoro_hybrid_mps=settings.kokoro_hybrid_mps,
+            kokoro_mlx=settings.kokoro_mlx,
         )
         workspace = resolve_workspace(settings)
         command = workspace.create_command(settings)

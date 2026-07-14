@@ -40,6 +40,10 @@ dev = [
     "ruff>=0.4.0",
     "mypy>=1.9",
 ]
+mlx = [
+    "mlx-audio==0.4.5",
+    "misaki[en]>=0.9.4",
+]
 
 [project.scripts]
 epub-listener = "epub_listener.__main__:main"
@@ -69,10 +73,21 @@ check_untyped_defs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 show_error_codes = true
+follow_imports_for_stubs = true
 
 [[tool.mypy.overrides]]
-module = ["ebooklib", "kokoro", "soundfile"]
+module = [
+    "ebooklib",
+    "kokoro",
+    "mlx",
+    "mlx.*",
+    "mlx_audio.*",
+    "numpy",
+    "numpy.*",
+    "soundfile",
+]
 ignore_missing_imports = true
+follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

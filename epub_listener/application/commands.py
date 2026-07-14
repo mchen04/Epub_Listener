@@ -12,6 +12,7 @@ class BuildAudiobookCommand:
     voice: str | None
     speed: str
     temp_dir: Path
+    title: str | None = None
     tts_backend: str = "edge"
 
     @property

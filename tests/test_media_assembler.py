@@ -9,6 +9,7 @@ from epub_listener.domain.models import AudioSegment
 from epub_listener.infrastructure.media import ffmpeg_assembler
 from epub_listener.infrastructure.media.ffmpeg_assembler import (
     FFmpegMediaAssembler,
+    _assembly_timeout_seconds,
     _escape_ffconcat_path,
 )
 
@@ -35,7 +36,7 @@ def test_assembler_replaces_existing_output_only_after_valid_temp_output(
     events: list[tuple[object, ...]] = []
 
     def fake_run_ffmpeg(*args: object, **kwargs: object) -> None:
-        assert kwargs == {}
+        assert kwargs == {"timeout": 301}
         target_arg = args[-1]
         assert isinstance(target_arg, Path)
         target = target_arg
@@ -65,6 +66,47 @@ def test_assembler_replaces_existing_output_only_after_valid_temp_output(
         ("probe", tmp_output),
         ("replace", tmp_output, output),
     ]
+
+
+def test_assembler_reencodes_to_avoid_cumulative_mp3_chapter_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ffmpeg_args: tuple[object, ...] = ()
+    output = tmp_path / "book.mp3"
+
+    def fake_run_ffmpeg(*args: object, **kwargs: object) -> None:
+        nonlocal ffmpeg_args
+        ffmpeg_args = args
+        target = args[-1]
+        assert isinstance(target, Path)
+        target.write_bytes(b"new")
+
+    monkeypatch.setattr(ffmpeg_assembler, "run_ffmpeg", fake_run_ffmpeg)
+    monkeypatch.setattr(ffmpeg_assembler, "get_audio_duration_ms", lambda path: 1000)
+    monkeypatch.setattr(
+        ffmpeg_assembler,
+        "durably_replace",
+        lambda source, target: target.write_bytes(source.read_bytes()),
+    )
+
+    FFmpegMediaAssembler().assemble([_segment(tmp_path)], _metadata(tmp_path), output)
+
+    assert "copy" not in ffmpeg_args
+    codec_index = ffmpeg_args.index("-c:a")
+    quality_index = ffmpeg_args.index("-q:a")
+    assert ffmpeg_args[codec_index + 1] == "libmp3lame"
+    assert ffmpeg_args[quality_index + 1] == "2"
+
+
+def test_assembly_timeout_scales_with_total_audio_duration(tmp_path: Path) -> None:
+    segment = AudioSegment(
+        path=tmp_path / "long.mp3",
+        duration_ms=7_200_000,
+        chapter_id="0000",
+    )
+
+    assert _assembly_timeout_seconds([segment]) == 660
 
 
 def test_ffconcat_escape_handles_apostrophe_paths() -> None:

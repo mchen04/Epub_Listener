@@ -1,6 +1,7 @@
 """FFmpeg-based media assembler."""
 
 import logging
+import math
 import os
 from pathlib import Path
 
@@ -13,9 +14,29 @@ from epub_listener.infrastructure.utils.ffmpeg_runner import run_ffmpeg
 
 logger = logging.getLogger(__name__)
 
+_MIN_ASSEMBLY_TIMEOUT_SECONDS = 300
+_ASSEMBLY_TIMEOUT_HEADROOM_SECONDS = 300
+_MIN_EXPECTED_ENCODING_SPEED = 20
+
 
 def _escape_ffconcat_path(path: Path) -> str:
     return str(path).replace("\\", "\\\\").replace("'", "'\\''")
+
+
+def _assembly_timeout_seconds(segments: list[AudioSegment]) -> int:
+    """Scale the export timeout for very long audiobooks.
+
+    Final assembly re-encodes every segment to keep chapter markers aligned.
+    A fixed five-minute limit is too short for multi-hundred-hour books, so
+    allow enough time for a conservative 20x realtime encode plus startup and
+    filesystem headroom.
+    """
+    duration_seconds = sum(segment.duration_ms for segment in segments) / 1000
+    return max(
+        _MIN_ASSEMBLY_TIMEOUT_SECONDS,
+        math.ceil(duration_seconds / _MIN_EXPECTED_ENCODING_SPEED)
+        + _ASSEMBLY_TIMEOUT_HEADROOM_SECONDS,
+    )
 
 
 class FFmpegMediaAssembler(MediaAssembler):
@@ -53,13 +74,22 @@ class FFmpegMediaAssembler(MediaAssembler):
                 metadata_path,
                 "-map_metadata",
                 "1",
+                # Each chapter is encoded independently, so every MP3 carries
+                # its own encoder delay and end padding. Packet-copy concat
+                # cannot represent gapless metadata at intermediate joins and
+                # drifts by roughly 50 ms per chapter. Decode the concat input
+                # and perform one final high-quality encode so chapter markers
+                # stay aligned across long audiobooks.
                 "-c:a",
-                "copy",
+                "libmp3lame",
+                "-q:a",
+                "2",
                 "-write_id3v1",
                 "1",
                 "-id3v2_version",
                 "3",
                 tmp_output,
+                timeout=_assembly_timeout_seconds(segments),
             )
             self._validate_output(tmp_output, output)
             try:
