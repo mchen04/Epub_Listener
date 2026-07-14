@@ -68,7 +68,7 @@ class BuildAudiobookUseCase:
         logger.info("Found %d chapters.", len(chapters))
 
         project = AudiobookProject(
-            title=command.input_epub.stem,
+            title=command.title or command.input_epub.stem,
             author=command.author,
             chapters=chapters,
             temp_dir=command.temp_dir,

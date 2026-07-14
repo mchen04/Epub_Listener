@@ -1,0 +1,74 @@
+import shutil
+import sys
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
+
+import numpy as np
+import pytest
+import soundfile as sf
+
+from epub_listener.infrastructure.tts import mlx_kokoro_tts
+
+
+def _install_fake_mlx(monkeypatch: pytest.MonkeyPatch) -> None:
+    mlx_package = ModuleType("mlx")
+    mlx_core = ModuleType("mlx.core")
+    mlx_core.eval = lambda value: None  # type: ignore[attr-defined]
+    mlx_package.core = mlx_core  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mlx", mlx_package)
+    monkeypatch.setitem(sys.modules, "mlx.core", mlx_core)
+
+
+def test_mlx_provider_applies_gain_limits_peaks_and_commits_atomically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install_fake_mlx(monkeypatch)
+    source = np.array([0.25, -0.5, 0.9], dtype=np.float32)
+
+    class FakeModel:
+        generate_kwargs: dict[str, object] = {}
+
+        def generate(self, *args: object, **kwargs: object) -> list[SimpleNamespace]:
+            self.generate_kwargs = kwargs
+            return [SimpleNamespace(audio=source)]
+
+    model = FakeModel()
+    captured_wav = np.array([], dtype=np.float32)
+
+    def fake_run_ffmpeg(*args: object, **kwargs: object) -> None:
+        nonlocal captured_wav
+        assert kwargs == {}
+        wav_path = args[1]
+        mp3_path = args[-1]
+        assert isinstance(wav_path, Path)
+        assert isinstance(mp3_path, Path)
+        captured_wav, sample_rate = sf.read(wav_path, dtype="float32")
+        assert sample_rate == mlx_kokoro_tts.SAMPLE_RATE
+        mp3_path.write_bytes(b"encoded")
+
+    def fake_commit(source_path: Path, output_path: Path) -> int:
+        shutil.copyfile(source_path, output_path)
+        return 1234
+
+    monkeypatch.setattr(mlx_kokoro_tts, "_get_model", lambda: model)
+    monkeypatch.setattr(mlx_kokoro_tts, "run_ffmpeg", fake_run_ffmpeg)
+    monkeypatch.setattr(mlx_kokoro_tts, "commit_generated_mp3", fake_commit)
+
+    output = tmp_path / "chapter.mp3"
+    duration = mlx_kokoro_tts.KokoroMLXTTSProvider().generate(
+        "text",
+        output,
+        "bf_emma",
+        "+0%",
+    )
+
+    expected = np.clip(source * mlx_kokoro_tts.OUTPUT_GAIN, -1.0, 1.0)
+    assert captured_wav == pytest.approx(expected, abs=4e-5)
+    assert duration == 1234
+    assert model.generate_kwargs["lang_code"] == "b"
+    assert output.read_bytes() == b"encoded"
+    assert "clipped 1 of 3 samples" in caplog.text
+    assert not (tmp_path / ".chapter.tmp.wav").exists()
+    assert not (tmp_path / ".chapter.tmp.mp3").exists()

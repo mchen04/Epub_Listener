@@ -6,6 +6,9 @@
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements-dev.txt
+
+# Optional Apple MLX adapter and its live smoke test
+pip install '.[mlx]'
 ```
 
 ## Code Quality

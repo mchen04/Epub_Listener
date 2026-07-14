@@ -41,6 +41,11 @@ class EbookLibParser(ChapterParser):
         for item in book.get_items():
             if item.get_type() != ebooklib.ITEM_DOCUMENT:
                 continue
+            # EbookLib reports the EPUB 3 navigation document as ordinary
+            # XHTML.  Large tables of contents can exceed the length filter
+            # and otherwise become a fake final audiobook chapter.
+            if isinstance(item, epub.EpubNav):
+                continue
 
             soup = BeautifulSoup(item.get_body_content(), "html.parser")
 

@@ -179,12 +179,16 @@ def test_workspace_command_uses_effective_default_voice_for_generation_key(
         _settings(tmp_path, voice=main_module.EDGE_DEFAULT_VOICE)
     )
     implicit_kokoro = workspace.create_command(_settings(tmp_path, use_kokoro=True))
+    mlx_kokoro = workspace.create_command(
+        _settings(tmp_path, use_kokoro=True, kokoro_mlx=True)
+    )
 
     assert implicit_edge.voice == main_module.EDGE_DEFAULT_VOICE
     assert implicit_edge.generation_key == explicit_edge.generation_key
     assert f"voice={main_module.EDGE_DEFAULT_VOICE}" in implicit_edge.generation_key
     assert implicit_kokoro.voice == main_module.KOKORO_DEFAULT_VOICE
     assert f"voice={main_module.KOKORO_DEFAULT_VOICE}" in implicit_kokoro.generation_key
+    assert "tts_backend=kokoro-mlx-gain+2.7db" in mlx_kokoro.generation_key
 
 
 def test_main_preserves_auto_workspace_and_prints_retry_on_build_failure(

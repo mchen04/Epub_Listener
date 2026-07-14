@@ -43,10 +43,11 @@ Epub Listener follows a **Layered / Ports & Adapters** architecture to keep busi
 3. **Track**: `JsonProgressTracker` checks which chapters are already complete via stored SHA-256 checksums and cached durations. Audio file existence is validated by the orchestrator.
 4. **Generate**: `TTSBatchGenerator` owns batch execution and calls a backend job boundary to write `.mp3` segments.
    - Edge-TTS uses the shared async batch runner configured by `--max-workers`.
-   - Kokoro uses the shared future batch runner with a provider-owned process-safe job API, a process pool, and process-local pipeline caching for CPU-bound inference.
+   - Kokoro uses the shared future batch runner with a provider-owned process-safe job API, a process pool, and process-local pipeline caching. The optional hybrid mode binds one worker to Apple MPS and one to CPU.
+   - MLX Kokoro uses the same single-job provider port through the sequential batch adapter, keeping Apple-specific model loading out of the application layer.
    - The batch runner calls back after each chapter completes so resume state is persisted during long concurrent batches. A failed chapter fails the build instead of silently producing a partial audiobook.
 5. **Metadata**: `FFmpegMetadataBuilder` writes `FFMETADATA1` with millisecond chapter boundaries. All title/author/chapter values are escaped per the FFMETADATA1 spec (`\=`, `\;`, `\#`, `\\`).
-6. **Assemble**: `FFmpegMediaAssembler` concatenates segments (single-quote-escaped paths for the concat demuxer) and embeds metadata into the final MP3.
+6. **Assemble**: `FFmpegMediaAssembler` concatenates segments (single-quote-escaped paths for the concat demuxer), re-encodes once to remove accumulated per-chapter MP3 padding, and embeds metadata into the final MP3. The timeout scales with total audiobook duration.
 7. **Cleanup**: On success, an auto-created temp dir is removed. On failure or interrupt, it is preserved and the path is printed so the user can resume with `--resume-dir`.
 
 ## Design Principles

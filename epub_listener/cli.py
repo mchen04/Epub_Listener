@@ -50,6 +50,11 @@ def parse_args() -> Settings:
         help="Author metadata for the audiobook",
     )
     parser.add_argument(
+        "--title",
+        default=argparse.SUPPRESS,
+        help="Title metadata for the audiobook (default: EPUB filename)",
+    )
+    parser.add_argument(
         "--resume-dir",
         type=Path,
         default=argparse.SUPPRESS,
@@ -65,6 +70,18 @@ def parse_args() -> Settings:
         "--kokoro-voice",
         default=argparse.SUPPRESS,
         help="Kokoro voice (e.g. af_heart, am_fenrir)",
+    )
+    parser.add_argument(
+        "--kokoro-hybrid-mps",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Use a tuned Apple MPS + CPU Kokoro worker pair",
+    )
+    parser.add_argument(
+        "--kokoro-mlx",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="Use Apple MLX for faster Kokoro inference",
     )
     parser.add_argument(
         "--concurrency",

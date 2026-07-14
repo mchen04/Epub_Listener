@@ -9,6 +9,7 @@ from epub_listener.infrastructure.tts.kokoro_tts import (
     KokoroParallelTTSBatchGenerator,
     KokoroTTSProvider,
 )
+from epub_listener.infrastructure.tts.mlx_kokoro_tts import KokoroMLXTTSProvider
 
 
 def create_tts_batch_generator(
@@ -16,8 +17,22 @@ def create_tts_batch_generator(
     use_kokoro: bool,
     concurrency: ConcurrencyStrategy,
     max_workers: int,
+    kokoro_hybrid_mps: bool = False,
+    kokoro_mlx: bool = False,
 ) -> TTSBatchGenerator:
+    if kokoro_hybrid_mps and kokoro_mlx:
+        raise ConfigurationError("--kokoro-hybrid-mps and --kokoro-mlx are mutually exclusive")
+    if kokoro_mlx and not use_kokoro:
+        raise ConfigurationError("--kokoro-mlx requires --use-kokoro")
+    if kokoro_hybrid_mps and not use_kokoro:
+        raise ConfigurationError("--kokoro-hybrid-mps requires --use-kokoro")
     if use_kokoro:
+        if kokoro_mlx:
+            if concurrency not in ("auto", "sequential"):
+                raise ConfigurationError(
+                    "--kokoro-mlx requires --concurrency sequential or auto"
+                )
+            return SequentialTTSBatchGenerator(KokoroMLXTTSProvider())
         mode = _resolve_backend_concurrency(
             concurrency,
             backend="Kokoro",
@@ -25,8 +40,15 @@ def create_tts_batch_generator(
             auto_mode="parallel",
         )
         if mode == "sequential":
+            if kokoro_hybrid_mps:
+                raise ConfigurationError(
+                    "--kokoro-hybrid-mps requires --concurrency parallel or auto"
+                )
             return SequentialTTSBatchGenerator(KokoroTTSProvider())
-        return KokoroParallelTTSBatchGenerator(max_workers=max_workers)
+        return KokoroParallelTTSBatchGenerator(
+            max_workers=max_workers,
+            hybrid_mps=kokoro_hybrid_mps,
+        )
 
     mode = _resolve_backend_concurrency(
         concurrency,

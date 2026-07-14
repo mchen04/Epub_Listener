@@ -24,7 +24,11 @@ from epub_listener.infrastructure.parsers.ebooklib_parser import EbookLibParser
 from epub_listener.infrastructure.persistence.json_tracker import JsonProgressTracker
 from epub_listener.infrastructure.tts.batch import SequentialTTSBatchGenerator
 from epub_listener.infrastructure.tts.edge_tts import EdgeAsyncTTSBatchGenerator, EdgeTTSProvider
-from epub_listener.infrastructure.tts.kokoro_tts import KokoroTTSProvider
+from epub_listener.infrastructure.tts.kokoro_tts import (
+    KokoroParallelTTSBatchGenerator,
+    KokoroTTSProvider,
+)
+from epub_listener.infrastructure.tts.mlx_kokoro_tts import KokoroMLXTTSProvider
 from epub_listener.infrastructure.utils.audio_probe import get_audio_duration_ms
 from epub_listener.infrastructure.utils.ffmpeg_runner import run_ffmpeg
 
@@ -122,6 +126,53 @@ def test_kokoro_tts() -> None:
         raise
 
 
+@pytest.mark.live
+def test_kokoro_hybrid_mps_batch() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        jobs = [
+            TTSJob(
+                "mps-or-cpu-a",
+                "A short hybrid Kokoro test for the first worker.",
+                tmp_dir / "a.mp3",
+                "af_heart",
+                "+0%",
+            ),
+            TTSJob(
+                "mps-or-cpu-b",
+                "A second short hybrid Kokoro test for the other worker.",
+                tmp_dir / "b.mp3",
+                "af_heart",
+                "+0%",
+            ),
+        ]
+        results: list[TTSResult] = []
+        KokoroParallelTTSBatchGenerator(
+            max_workers=8,
+            hybrid_mps=True,
+        ).generate_many(jobs, results.append)
+
+        assert len(results) == 2
+        assert all(result.duration_ms > 0 for result in results)
+        assert all((tmp_dir / name).stat().st_size > 0 for name in ("a.mp3", "b.mp3"))
+
+
+@pytest.mark.live
+def test_kokoro_mlx_tts() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        output = Path(tmp) / "mlx.mp3"
+        duration = KokoroMLXTTSProvider().generate(
+            "This is a smoke test for Kokoro through Apple MLX.",
+            output,
+            "af_heart",
+            "+0%",
+        )
+
+        assert duration > 0
+        assert output.stat().st_size > 0
+        assert abs(get_audio_duration_ms(output) - duration) < 100
+
+
 def _write_tone_mp3(output: Path, frequency: int) -> None:
     run_ffmpeg(
         "-f",
@@ -196,7 +247,12 @@ def test_media_pipeline_with_local_segments(tmp_path: Path) -> None:
 
     assert final.exists()
     assert final.stat().st_size > 0
-    assert get_audio_duration_ms(final) > 0
+    final_duration = get_audio_duration_ms(final)
+    assert final_duration > 0
+    # Independently encoded MP3 segments contain per-file encoder padding.
+    # The assembler must remove it rather than accumulating timing drift at
+    # every chapter join.
+    _assert_ms_close(final_duration, dur1 + dur2, tolerance_ms=30)
     chapters = _probe_chapters(final)
     assert [chapter["tags"]["title"] for chapter in chapters] == ["Chapter 1", "Chapter 2"]
     _assert_ms_close(_chapter_time_ms(chapters[0], "start"), 0)
