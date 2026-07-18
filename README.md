@@ -23,6 +23,9 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
+# Optional: editable install, adds the `epub-listener` console command
+pip install -e .
+
 # Optional: Apple-Silicon-optimized Kokoro inference
 pip install '.[mlx]'
 ```
@@ -58,6 +61,14 @@ python -m epub_listener my_book.epub --resume-dir /tmp/epub_audiobook_xxx
 ```bash
 screen -S builder -d -m bash -c "source venv/bin/activate && python -m epub_listener input.epub > build.log 2>&1"
 tail -f build.log
+```
+
+## Web Scrapers
+
+`epub_listener/scrapers/` contains scrapers that produce EPUBs for the pipeline. Currently included: Worm (by Wildbow).
+
+```bash
+python -m epub_listener.scrapers.worm --output worm.epub
 ```
 
 ## Documentation
