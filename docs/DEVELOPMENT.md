@@ -23,6 +23,9 @@ ruff check epub_listener/
 # Type check
 mypy epub_listener/
 
+# Test suite (live network/TTS tests are excluded by default)
+pytest
+
 # Live TTS/network smoke tests
 pytest -m live
 ```
