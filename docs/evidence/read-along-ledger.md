@@ -65,3 +65,72 @@ Repo state at start: Epub_Listener main @ 296bf05 (untracked novelight
 scraper files preserved, unrelated); audiobook_pwa main @ c357768 (clean).
 Branches: `feat/read-along-transcript` (Epub_Listener), `feat/read-along`
 (Hark).
+
+## Wave 2 — Capture, embed, accuracy gate (2026-07-19)
+
+Implementation:
+- `TTSJob.transcript_path` (None = capture off). Providers persist
+  `chap_<id>.transcript.json` durably BEFORE committing the chapter MP3, so a
+  chapter is never marked complete without its transcript.
+- Kokoro: iterates `KPipeline.Result`s; token `start_ts`/`end_ts` verified
+  empirically to restart per yielded chunk → offset by cumulative samples.
+  Punctuation tokens carry timestamps but are excluded from word cues.
+  Token-less results fall back to chunk spans (sentence granularity).
+- Edge: `Communicate(..., boundary="WordBoundary").stream()` (the default
+  SentenceBoundary config yields NO boundary events — must be explicit).
+  Offsets are 100-ns ticks, cumulative across internal splits.
+- MLX: chunk-level spans (no per-token timestamps in mlx_audio) — honest
+  sentence-granularity fallback; unit-tested with a fake model (mlx_audio not
+  installed in this venv).
+- Embedder `Id3TranscriptEmbedder`: combines per-chapter files in segment
+  order (same positive-duration filter as the FFMETADATA builder), validates,
+  writes sidecar `<output>.transcript.json`, gzips into one GEOB frame via
+  mutagen (ID3v2.3), `fsync`s. Missing/corrupt chapter file → embed skipped
+  with a warning; the build still succeeds (audio never fails over transcript
+  trouble). NOTE: after the mutagen tag rewrite, CHAP frame *physical* order
+  is not guaranteed — consumers must order chapter markers by start time
+  (Hark already does; ffprobe-based tooling must sort).
+- CLI `--no-transcript` (default on). Flag off: no capture, no embed, jobs
+  carry transcript_path=None; cached chapters without transcripts stay
+  reusable. Flag on regenerates cached chapters lacking transcript files.
+
+Measured and fixed — chapter-boundary drift (pre-existing accuracy bug):
+- ffprobe's header-based MP3 duration overshoots decoded audio by ~48-64 ms
+  per chapter file (encoder delay/padding + Xing frame). Boundaries built
+  from those durations drifted cumulatively (-63/-127/-175 ms by chapter 4).
+- Proven: concat+decode of the final assembly is SAMPLE-EXACT (sum of
+  individually decoded chapter lengths == final decoded length, delta 0).
+- Fix: `get_audio_duration_ms` now uses the decoded frame count
+  (soundfile/libsndfile) with ffprobe fallback. Post-fix shift: 0 ms on every
+  chapter, both engines.
+
+Edge boundary lead correction:
+- Edge WordBoundary offsets measured consistently ~100 ms EARLY vs acoustic
+  onsets in the delivered MP3 (mean -114 ms, median -106 ms, std 27 over a
+  24-word calibration set; outliers are soft fricative onsets that energy
+  detection reads late). `_BOUNDARY_LEAD_CORRECTION_MS = 100` applied.
+
+Accuracy gate (tests/integration/test_accuracy_gate.py, `-m live`, real
+generation → final assembled MP3, acoustic ground truth from a 24-word
+silence-gapped calibration chapter + prose/dialogue/numbers chapters):
+- kokoro: median 13.0 ms, p95 45.7 ms (gate: ≤30/≤100) — PASS
+- edge:   median  7.0 ms, p95 69.7 ms — PASS
+- re-encode shift: 0.0 ms per chapter, both engines — PASS (≤50)
+- sentence coverage: 24/24, 3/3, 5/5, 7/7 both engines — 100% PASS
+- MLX: gate not runnable (mlx_audio not installed) — chunk fallback covered
+  by unit tests; recorded as environment limitation.
+
+Listen-and-check (docs/evidence/listen-check.json, whisper tiny.en on 10
+random word clips from prose/dialogue/numbers chapters, kokoro build):
+7/10 exact transcription matches; 2 more match at word-stem level
+("climb the"→climbed, "press"→pressed); 1 whisper mishearing of a 0.5 s clip
+("wheeled"→"Wild Though", phonetically adjacent). Timing correctness itself
+is carried by the calibration gate above. whisper installed as local dev
+tooling only (not a project dependency).
+
+Resume: unit + integration coverage (partial-failure resume regenerates only
+missing chapters; fresh-resume smoke test asserts the resumed output embeds a
+complete schema-valid transcript; cached chapters without transcript files
+regenerate when capture is on).
+
+Suite: 162 passed, black/ruff clean.

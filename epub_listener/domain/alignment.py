@@ -107,9 +107,7 @@ def anchor_cues(text: str, cues: list[RawWordCue]) -> list[RawWordCue]:
             # written token at the scan position for every spoken word of it,
             # without consuming it, so the display still tracks the narration.
             token_start, token_end = _token_at(text, cursor)
-            anchored.append(
-                RawWordCue(cue.text, cue.start_ms, cue.end_ms, token_start, token_end)
-            )
+            anchored.append(RawWordCue(cue.text, cue.start_ms, cue.end_ms, token_start, token_end))
     return anchored
 
 
@@ -178,7 +176,5 @@ def build_chunk_sentences(chunks: list[tuple[str, int, int]]) -> list[SentenceCu
 
 def granularity_for(sentences: list[SentenceCue]) -> str:
     return (
-        GRANULARITY_WORD
-        if any(sentence.words for sentence in sentences)
-        else GRANULARITY_SENTENCE
+        GRANULARITY_WORD if any(sentence.words for sentence in sentences) else GRANULARITY_SENTENCE
     )

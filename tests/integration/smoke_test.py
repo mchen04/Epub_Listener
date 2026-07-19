@@ -18,8 +18,10 @@ from epub_listener.config import Settings
 from epub_listener.domain.exceptions import TTSGenerationError
 from epub_listener.domain.models import AudioSegment, Chapter
 from epub_listener.domain.sanitize import sanitize_filename
+from epub_listener.domain.transcript import SentenceCue
 from epub_listener.infrastructure.media.ffmpeg_assembler import FFmpegMediaAssembler
 from epub_listener.infrastructure.media.metadata_builder import FFmpegMetadataBuilder
+from epub_listener.infrastructure.media.transcript_embedder import Id3TranscriptEmbedder
 from epub_listener.infrastructure.parsers.ebooklib_parser import EbookLibParser
 from epub_listener.infrastructure.persistence.json_tracker import JsonProgressTracker
 from epub_listener.infrastructure.tts.batch import SequentialTTSBatchGenerator
@@ -29,6 +31,7 @@ from epub_listener.infrastructure.tts.kokoro_tts import (
     KokoroTTSProvider,
 )
 from epub_listener.infrastructure.tts.mlx_kokoro_tts import KokoroMLXTTSProvider
+from epub_listener.infrastructure.tts.transcript_capture import write_chapter_transcript
 from epub_listener.infrastructure.utils.audio_probe import get_audio_duration_ms
 from epub_listener.infrastructure.utils.ffmpeg_runner import run_ffmpeg
 
@@ -360,6 +363,13 @@ class LocalToneBatchGenerator:
         self.calls += 1
         for index, job in enumerate(jobs):
             _write_tone_mp3(job.output, 440 + index * 110)
+            if job.transcript_path is not None:
+                write_chapter_transcript(
+                    job.transcript_path,
+                    job.chapter_id,
+                    "fake",
+                    [SentenceCue("Stub sentence.", 0, 1000, ())],
+                )
             on_complete(TTSResult(job.chapter_id, get_audio_duration_ms(job.output)))
 
 
@@ -388,6 +398,7 @@ def test_full_orchestrator_pipeline_with_local_audio_and_resume(tmp_path: Path) 
         assembler=FFmpegMediaAssembler(),
         metadata_builder=FFmpegMetadataBuilder(),
         tracker=JsonProgressTracker(progress_dir),
+        transcript_embedder=Id3TranscriptEmbedder(),
     )
     command = BuildAudiobookCommand(
         input_epub=epub_path,
@@ -413,6 +424,7 @@ def test_full_orchestrator_pipeline_with_local_audio_and_resume(tmp_path: Path) 
         assembler=FFmpegMediaAssembler(),
         metadata_builder=FFmpegMetadataBuilder(),
         tracker=JsonProgressTracker(progress_dir),
+        transcript_embedder=Id3TranscriptEmbedder(),
     )
     resumed_command = BuildAudiobookCommand(
         input_epub=epub_path,
@@ -430,6 +442,21 @@ def test_full_orchestrator_pipeline_with_local_audio_and_resume(tmp_path: Path) 
         "Local One",
         "Local Two",
     ]
+
+    # The resumed build must carry a complete, schema-valid transcript built
+    # entirely from cached per-chapter transcripts.
+    import gzip
+    import json as json_module
+
+    from mutagen.id3 import ID3
+
+    from epub_listener.domain.transcript import GEOB_DESCRIPTION, parse_book_transcript
+
+    frames = [f for f in ID3(resumed_output).getall("GEOB") if f.desc == GEOB_DESCRIPTION]
+    assert len(frames) == 1
+    transcript = parse_book_transcript(json_module.loads(gzip.decompress(frames[0].data)))
+    assert [chapter.index for chapter in transcript.chapters] == [0, 1]
+    assert all(chapter.sentences for chapter in transcript.chapters)
 
 
 @pytest.mark.live

@@ -17,15 +17,30 @@ def get_audio_duration_ms(
     *,
     timeout: int = DEFAULT_FFPROBE_TIMEOUT_SECONDS,
 ) -> int:
-    """Return audio duration in milliseconds using ffprobe.
+    """Return audio duration in milliseconds, preferring the decoded length.
+
+    ffprobe's header-derived MP3 duration overshoots the decoded audio by the
+    encoder delay/padding and the Xing frame (~50-60 ms per file). Chapter
+    markers and transcript timestamps are anchored to decoded audio, so the
+    decoded frame count is authoritative; ffprobe remains the fallback for
+    files libsndfile cannot open.
 
     Args:
         audio_file_path: Path to the audio file.
-        timeout: Maximum seconds to wait for ffprobe.
+        timeout: Maximum seconds to wait for ffprobe (fallback path).
 
     Returns:
         Duration in milliseconds.
     """
+    try:
+        import soundfile as sf
+
+        info = sf.info(str(audio_file_path))
+        if info.frames > 0 and info.samplerate > 0:
+            return round(info.frames * 1000 / info.samplerate)
+    except Exception:
+        logger.debug("soundfile could not measure %s; falling back to ffprobe", audio_file_path)
+
     try:
         result = subprocess.run(
             [

@@ -101,7 +101,7 @@ class SequentialTTSBatchGenerator:
         on_complete: GenerationCallback,
     ) -> None:
         for job in jobs:
-            duration_ms = self._provider.generate(job.text, job.output, job.voice, job.speed)
+            duration_ms = self._provider.run_job(job)
             on_complete(TTSResult(job.chapter_id, duration_ms))
 
 

@@ -4,6 +4,7 @@ import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -41,6 +42,9 @@ class WritingTTSProvider:
         output.write_bytes(b"audio")
         return 1000
 
+    def run_job(self, job: TTSJob) -> int:
+        return self.generate(job.text, job.output, job.voice, job.speed)
+
 
 def _stub_kokoro_generation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeSoundFile:
@@ -63,7 +67,9 @@ def _stub_kokoro_generation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(
         kokoro_tts,
         "_get_pipeline",
-        lambda lang: lambda *args, **kwargs: [(None, None, [0.1])],
+        lambda lang: lambda *args, **kwargs: [
+            SimpleNamespace(graphemes="text", tokens=None, audio=[0.1])
+        ],
     )
 
 
@@ -601,12 +607,13 @@ def test_edge_provider_times_out_stalled_generation(
         def __init__(self, *args: object, **kwargs: object) -> None:
             pass
 
-        async def save(self, output_file: str) -> None:
+        async def stream(self):
             try:
                 await asyncio.sleep(60)
             except asyncio.CancelledError:
                 while True:
                     await asyncio.sleep(60)
+            yield {"type": "audio", "data": b""}
 
     monkeypatch.setattr(edge_tts_module.edge_tts, "Communicate", SlowCommunicate)
 

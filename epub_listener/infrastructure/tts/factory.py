@@ -29,9 +29,7 @@ def create_tts_batch_generator(
     if use_kokoro:
         if kokoro_mlx:
             if concurrency not in ("auto", "sequential"):
-                raise ConfigurationError(
-                    "--kokoro-mlx requires --concurrency sequential or auto"
-                )
+                raise ConfigurationError("--kokoro-mlx requires --concurrency sequential or auto")
             return SequentialTTSBatchGenerator(KokoroMLXTTSProvider())
         mode = _resolve_backend_concurrency(
             concurrency,

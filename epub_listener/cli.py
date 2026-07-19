@@ -84,6 +84,13 @@ def parse_args() -> Settings:
         help="Use Apple MLX for faster Kokoro inference",
     )
     parser.add_argument(
+        "--no-transcript",
+        action="store_false",
+        dest="transcript",
+        default=argparse.SUPPRESS,
+        help="Do not capture word timings or embed a read-along transcript",
+    )
+    parser.add_argument(
         "--concurrency",
         choices=CONCURRENCY_CHOICES,
         default=argparse.SUPPRESS,

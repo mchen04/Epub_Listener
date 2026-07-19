@@ -40,6 +40,10 @@ class Settings(BaseSettings):
         default=False,
         description="Use Apple MLX Kokoro inference",
     )
+    transcript: bool = Field(
+        default=True,
+        description="Capture word timings and embed a read-along transcript in the MP3",
+    )
     concurrency: ConcurrencyStrategy = Field(default="auto", description="Concurrency strategy")
     max_workers: int = Field(default=4, description="Maximum concurrent TTS jobs")
     log_level: str = Field(default="INFO", description="Logging level")

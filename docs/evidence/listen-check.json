@@ -1,0 +1,52 @@
+[
+ {
+  "claimed": "1200",
+  "heard": "It's 1,200 g.",
+  "match": true
+ },
+ {
+  "claimed": "glass",
+  "heard": "the glass.",
+  "match": true
+ },
+ {
+  "claimed": "climbed",
+  "heard": "Climb the...",
+  "match": false
+ },
+ {
+  "claimed": "wall",
+  "heard": "the wall.",
+  "match": true
+ },
+ {
+  "claimed": "Stay",
+  "heard": "Stay clear.",
+  "match": true
+ },
+ {
+  "claimed": "the",
+  "heard": "The Trinity Now",
+  "match": true
+ },
+ {
+  "claimed": "wheeled",
+  "heard": "Wild Though",
+  "match": false
+ },
+ {
+  "claimed": "the",
+  "heard": "It's the glass.",
+  "match": true
+ },
+ {
+  "claimed": "45%",
+  "heard": "45% human.",
+  "match": true
+ },
+ {
+  "claimed": "pressed",
+  "heard": "to press together.",
+  "match": false
+ }
+]

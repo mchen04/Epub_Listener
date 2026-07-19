@@ -55,7 +55,7 @@ def test_fixture_number_expansion_shares_char_range() -> None:
     digits = {(w.char_start, w.char_end) for w in sentence.words[1:4]}
     # All three spoken words of "123" mark the same displayed token.
     assert len(digits) == 1
-    (char_start, char_end) = digits.pop()
+    char_start, char_end = digits.pop()
     assert sentence.text[char_start:char_end] == "123"
 
 
@@ -66,9 +66,7 @@ def test_round_trip_serialization() -> None:
 
 
 def test_chapter_file_round_trip() -> None:
-    sentences = (
-        SentenceCue("Hello there.", 0, 900, (WordCue("Hello", 0, 400, 0, 5),)),
-    )
+    sentences = (SentenceCue("Hello there.", 0, 900, (WordCue("Hello", 0, 400, 0, 5),)),)
     data = chapter_file_to_dict("0001", "kokoro", "word", sentences)
     parsed = parse_chapter_file(data)
     assert parsed["chapterId"] == "0001"
@@ -158,13 +156,13 @@ def test_build_sentence_cues_orders_and_contains_words() -> None:
 
 
 def test_build_chunk_sentences_fallback() -> None:
-    sentences = build_chunk_sentences([("First chunk.", 0, 1000), (" ", 1000, 1100), ("Next.", 1050, 2000)])
+    sentences = build_chunk_sentences(
+        [("First chunk.", 0, 1000), (" ", 1000, 1100), ("Next.", 1050, 2000)]
+    )
     assert [s.text for s in sentences] == ["First chunk.", "Next."]
     assert sentences[1].start_ms == 1050
     assert granularity_for(sentences) == "sentence"
-    assert granularity_for(
-        [SentenceCue("Hi.", 0, 100, (WordCue("Hi", 0, 100, 0, 2),))]
-    ) == "word"
+    assert granularity_for([SentenceCue("Hi.", 0, 100, (WordCue("Hi", 0, 100, 0, 2),))]) == "word"
 
 
 def test_full_document_validation_via_dataclasses() -> None:

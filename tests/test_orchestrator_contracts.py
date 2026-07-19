@@ -5,10 +5,17 @@ import pytest
 
 from epub_listener.application.commands import BuildAudiobookCommand
 from epub_listener.application.orchestrator import BuildAudiobookUseCase
-from epub_listener.application.ports import GenerationCallback, TTSJob, TTSResult
+from epub_listener.application.ports import (
+    GenerationCallback,
+    TTSJob,
+    TTSResult,
+    transcript_path_for,
+)
 from epub_listener.domain.exceptions import EpubListenerError, TTSGenerationError
 from epub_listener.domain.models import AudioSegment, Chapter
+from epub_listener.domain.transcript import SentenceCue
 from epub_listener.infrastructure.persistence.json_tracker import JsonProgressTracker
+from epub_listener.infrastructure.tts.transcript_capture import write_chapter_transcript
 
 
 class StaticParser:
@@ -53,6 +60,17 @@ class MetadataWriter:
         output.write_text("metadata", encoding="utf-8")
 
 
+def _honor_transcript_contract(job: TTSJob) -> None:
+    """Real providers persist a chapter transcript before reporting a job done."""
+    if job.transcript_path is not None:
+        write_chapter_transcript(
+            job.transcript_path,
+            job.chapter_id,
+            "fake",
+            [SentenceCue("Stub sentence.", 0, 1000, ())],
+        )
+
+
 class ReversingBatchGenerator:
     def generate_many(
         self,
@@ -73,6 +91,7 @@ class PartialFailingBatchGenerator:
     ) -> None:
         first = jobs[0]
         first.output.write_bytes(b"audio")
+        _honor_transcript_contract(first)
         result = TTSResult(first.chapter_id, 1000)
         on_complete(result)
         raise TTSGenerationError("boom")
@@ -146,6 +165,7 @@ class WritingBatchGenerator:
         for job in jobs:
             self.generated.append(job.chapter_id)
             job.output.write_bytes(b"fresh audio")
+            _honor_transcript_contract(job)
             on_complete(TTSResult(job.chapter_id, self.duration_ms))
 
 
@@ -314,6 +334,12 @@ def test_use_case_fresh_resume_reuses_cached_segments_without_tts(tmp_path: Path
     for chapter, duration_ms in zip(chapters, (1000, 2000), strict=True):
         audio_path = work_dir / f"chap_{chapter.id}.mp3"
         audio_path.write_bytes(b"audio")
+        write_chapter_transcript(
+            transcript_path_for(audio_path),
+            chapter.id,
+            "fake",
+            [SentenceCue("Stub sentence.", 0, 1000, ())],
+        )
         tracker.mark_complete(chapter.id, chapter.checksum, duration_ms, command.generation_key)
 
     assembler = CapturingAssembler()
@@ -492,3 +518,105 @@ def test_use_case_rejects_duplicate_batch_result_chapter(tmp_path: Path) -> None
 
     with pytest.raises(TTSGenerationError, match="duplicate chapter"):
         use_case.execute(_command(tmp_path))
+
+
+class RecordingEmbedder:
+    def __init__(self) -> None:
+        self.calls: list[tuple[list[str], str, Path]] = []
+
+    def embed(
+        self,
+        segments: list[AudioSegment],
+        chapter_titles: dict[str, str],
+        engine: str,
+        generation_key: str,
+        output: Path,
+    ) -> bool:
+        self.calls.append(([segment.chapter_id for segment in segments], engine, output))
+        return True
+
+
+def test_use_case_embeds_transcript_after_assembly(tmp_path: Path) -> None:
+    chapter = Chapter("0000", "One", "one " * 50)
+    embedder = RecordingEmbedder()
+    use_case = BuildAudiobookUseCase(
+        parser=StaticParser([chapter]),
+        tts=WritingBatchGenerator(),
+        assembler=CapturingAssembler(),
+        metadata_builder=MetadataWriter(),
+        tracker=JsonProgressTracker(tmp_path / "work"),
+        transcript_embedder=embedder,
+    )
+
+    output = use_case.execute(_command(tmp_path))
+
+    assert embedder.calls == [(["0000"], "edge", output)]
+
+
+def test_use_case_transcript_flag_off_disables_capture_and_embed(tmp_path: Path) -> None:
+    chapter = Chapter("0000", "One", "one " * 50)
+    embedder = RecordingEmbedder()
+
+    class JobInspectingGenerator(WritingBatchGenerator):
+        captured_jobs: list[TTSJob] = []
+
+        def generate_many(self, jobs, on_complete):
+            type(self).captured_jobs = list(jobs)
+            super().generate_many(jobs, on_complete)
+
+    epub_path = tmp_path / "book.epub"
+    epub_path.write_bytes(b"epub")
+    command = BuildAudiobookCommand(
+        input_epub=epub_path,
+        output_path=tmp_path / "book.mp3",
+        author="Author",
+        voice=None,
+        speed="+0%",
+        temp_dir=tmp_path / "work",
+        transcript=False,
+    )
+    use_case = BuildAudiobookUseCase(
+        parser=StaticParser([chapter]),
+        tts=JobInspectingGenerator(),
+        assembler=CapturingAssembler(),
+        metadata_builder=MetadataWriter(),
+        tracker=JsonProgressTracker(tmp_path / "work"),
+        transcript_embedder=embedder,
+    )
+
+    use_case.execute(command)
+
+    assert [job.transcript_path for job in JobInspectingGenerator.captured_jobs] == [None]
+    assert embedder.calls == []
+    assert not list((tmp_path / "work").glob("*.transcript.json"))
+
+
+def test_use_case_flag_off_reuses_cache_missing_transcripts(tmp_path: Path) -> None:
+    """Books cached before the transcript feature stay resumable with the flag off."""
+    chapter = Chapter("0000", "One", "one " * 50)
+    work_dir = tmp_path / "work"
+    epub_path = tmp_path / "book.epub"
+    epub_path.write_bytes(b"epub")
+    command = BuildAudiobookCommand(
+        input_epub=epub_path,
+        output_path=tmp_path / "book.mp3",
+        author="Author",
+        voice=None,
+        speed="+0%",
+        temp_dir=work_dir,
+        transcript=False,
+    )
+    tracker = JsonProgressTracker(work_dir)
+    audio_path = work_dir / "chap_0000.mp3"
+    audio_path.write_bytes(b"audio")
+    tracker.mark_complete(chapter.id, chapter.checksum, 1000, command.generation_key)
+
+    use_case = BuildAudiobookUseCase(
+        parser=StaticParser([chapter]),
+        tts=FailingOnGenerateBatchGenerator(),
+        assembler=CapturingAssembler(),
+        metadata_builder=MetadataWriter(),
+        tracker=JsonProgressTracker(work_dir),
+    )
+
+    assert use_case.execute(command).exists()

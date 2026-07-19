@@ -13,9 +13,7 @@ def test_parser_does_not_treat_large_navigation_document_as_chapter(tmp_path: Pa
     book.set_language("en")
 
     chapter = epub.EpubHtml(title="Chapter 1", file_name="chapter.xhtml", lang="en")
-    chapter.content = (
-        "<h1>Chapter 1</h1><p>" + "This is actual chapter prose. " * 10 + "</p>"
-    )
+    chapter.content = "<h1>Chapter 1</h1><p>" + "This is actual chapter prose. " * 10 + "</p>"
     book.add_item(chapter)
     book.toc = tuple(
         epub.Link("chapter.xhtml", f"An intentionally verbose chapter link {number}", str(number))

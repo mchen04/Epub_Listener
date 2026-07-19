@@ -72,3 +72,45 @@ def test_mlx_provider_applies_gain_limits_peaks_and_commits_atomically(
     assert "clipped 1 of 3 samples" in caplog.text
     assert not (tmp_path / ".chapter.tmp.wav").exists()
     assert not (tmp_path / ".chapter.tmp.mp3").exists()
+
+
+def test_mlx_provider_captures_chunk_level_transcript(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from epub_listener.application.ports import TTSJob, transcript_path_for
+    from epub_listener.domain.transcript import parse_chapter_file
+
+    _install_fake_mlx(monkeypatch)
+    chunk = np.zeros(mlx_kokoro_tts.SAMPLE_RATE, dtype=np.float32)  # 1s per chunk
+
+    class FakeModel:
+        def generate(self, *args: object, **kwargs: object) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(audio=chunk, graphemes="First chunk here."),
+                SimpleNamespace(audio=chunk, graphemes="Second chunk there."),
+            ]
+
+    monkeypatch.setattr(mlx_kokoro_tts, "_get_model", lambda: FakeModel())
+    monkeypatch.setattr(mlx_kokoro_tts, "run_ffmpeg", lambda *a, **k: None)
+    monkeypatch.setattr(mlx_kokoro_tts, "commit_generated_mp3", lambda source, output: 2000)
+
+    output = tmp_path / "chapter.mp3"
+    job = TTSJob(
+        "0000",
+        "First chunk here.\nSecond chunk there.",
+        output,
+        "af_heart",
+        "+0%",
+        transcript_path=transcript_path_for(output),
+    )
+    assert mlx_kokoro_tts.KokoroMLXTTSProvider().run_job(job) == 2000
+
+    parsed = parse_chapter_file(json.loads(transcript_path_for(output).read_text(encoding="utf-8")))
+    assert parsed["engine"] == "kokoro-mlx"
+    assert parsed["granularity"] == "sentence"
+    sentences = parsed["sentences"]
+    assert [s.text for s in sentences] == ["First chunk here.", "Second chunk there."]
+    assert sentences[1].start_ms == 1000

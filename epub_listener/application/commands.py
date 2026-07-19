@@ -14,6 +14,7 @@ class BuildAudiobookCommand:
     temp_dir: Path
     title: str | None = None
     tts_backend: str = "edge"
+    transcript: bool = True
 
     @property
     def generation_key(self) -> str:
