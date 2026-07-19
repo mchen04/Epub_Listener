@@ -27,3 +27,7 @@ class AudioProbeError(EpubListenerError):
 
 class ResumeError(EpubListenerError):
     """Failed to resume a previous build."""
+
+
+class TranscriptError(EpubListenerError):
+    """Invalid or unusable transcript data."""
