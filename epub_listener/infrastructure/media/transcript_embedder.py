@@ -9,7 +9,6 @@ from pathlib import Path
 
 from epub_listener import __version__
 from epub_listener.application.ports import TranscriptEmbedder, transcript_path_for
-from epub_listener.domain.exceptions import TranscriptError
 from epub_listener.domain.models import AudioSegment
 from epub_listener.domain.transcript import (
     GEOB_DESCRIPTION,
@@ -44,14 +43,15 @@ class Id3TranscriptEmbedder(TranscriptEmbedder):
     ) -> bool:
         try:
             document = self._combined_document(segments, chapter_titles, engine, generation_key)
-        except (TranscriptError, OSError, json.JSONDecodeError) as exc:
-            logger.warning("Transcript embedding skipped: %s", exc)
-            return False
-        payload = json.dumps(document, separators=(",", ":"), ensure_ascii=False)
-        try:
+            payload = json.dumps(document, separators=(",", ":"), ensure_ascii=False)
             self._write_frame(output, payload)
             write_text_durably(output.with_suffix(".transcript.json"), payload + "\n")
-        except OSError as exc:
+        except Exception as exc:
+            # The audiobook is already durably written by the time this runs, so
+            # NO transcript problem may fail the build. Corrupt or unreadable
+            # chapter files (UnicodeDecodeError/JSON), schema violations
+            # (TranscriptError), and gzip/mutagen/tagging failures are all
+            # contained here: log and skip the transcript, keep the playable MP3.
             logger.warning("Transcript embedding skipped: %s", exc)
             return False
         return True

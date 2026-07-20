@@ -11,6 +11,8 @@ from epub_listener.application.ports import TTSJob, transcript_path_for
 from epub_listener.domain.models import AudioSegment
 from epub_listener.domain.transcript import (
     GEOB_DESCRIPTION,
+    SentenceCue,
+    WordCue,
     parse_book_transcript,
     parse_chapter_file,
 )
@@ -18,7 +20,10 @@ from epub_listener.infrastructure.media.transcript_embedder import Id3Transcript
 from epub_listener.infrastructure.tts import edge_tts as edge_tts_module
 from epub_listener.infrastructure.tts import kokoro_tts
 from epub_listener.infrastructure.tts.edge_tts import EdgeTTSProvider
-from epub_listener.infrastructure.tts.transcript_capture import KokoroTokenWalker
+from epub_listener.infrastructure.tts.transcript_capture import (
+    KokoroTokenWalker,
+    write_chapter_transcript,
+)
 from tests.integration.smoke_test import _write_tone_mp3  # noqa: E402
 
 
@@ -212,10 +217,8 @@ def test_kokoro_token_walker_anchors_with_windowed_recovery() -> None:
 
 
 def test_embedder_adds_frame_and_preserves_chapters(tmp_path: Path) -> None:
-    from epub_listener.domain.transcript import SentenceCue, WordCue
     from epub_listener.infrastructure.media.ffmpeg_assembler import FFmpegMediaAssembler
     from epub_listener.infrastructure.media.metadata_builder import FFmpegMetadataBuilder
-    from epub_listener.infrastructure.tts.transcript_capture import write_chapter_transcript
     from epub_listener.infrastructure.utils.audio_probe import get_audio_duration_ms
 
     segments = []
@@ -282,6 +285,51 @@ def test_embedder_skips_when_chapter_transcript_missing(tmp_path: Path) -> None:
 
     assert Id3TranscriptEmbedder().embed(segments, {}, "fake", "key", output) is False
     assert not output.with_suffix(".transcript.json").exists()
+
+
+@pytest.mark.parametrize(
+    "corrupt",
+    [b"\xff\xfe\x00not utf-8", b"{ not valid json", b'{"format":"wrong"}'],
+    ids=["undecodable", "bad-json", "schema-invalid"],
+)
+def test_embedder_never_breaks_the_build_on_corrupt_chapter(tmp_path: Path, corrupt: bytes) -> None:
+    """A corrupt chapter transcript must skip embedding, not raise (the audio
+    is already written by the time embed() runs)."""
+    audio = tmp_path / "chap_0000.mp3"
+    _write_tone_mp3(audio, 440)
+    transcript_path_for(audio).write_bytes(corrupt)
+    segments = [AudioSegment(path=audio, duration_ms=1000, chapter_id="0000")]
+    output = tmp_path / "book.mp3"
+    output.write_bytes(audio.read_bytes())
+
+    assert Id3TranscriptEmbedder().embed(segments, {}, "fake", "key", output) is False
+    assert not output.with_suffix(".transcript.json").exists()
+
+
+def test_embedder_never_breaks_the_build_on_tagging_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mutagen/tagging failure must be contained, not raised."""
+    from epub_listener.infrastructure.media import transcript_embedder as embedder_module
+
+    audio = tmp_path / "chap_0000.mp3"
+    _write_tone_mp3(audio, 440)
+    write_chapter_transcript(
+        transcript_path_for(audio),
+        "0000",
+        "fake",
+        [SentenceCue("Hello there.", 0, 900, (WordCue("Hello", 0, 400, 0, 5),))],
+    )
+    segments = [AudioSegment(path=audio, duration_ms=1000, chapter_id="0000")]
+    output = tmp_path / "book.mp3"
+    output.write_bytes(audio.read_bytes())
+
+    def boom(self: object, out: Path, payload: str) -> None:
+        raise RuntimeError("tagging blew up")
+
+    monkeypatch.setattr(embedder_module.Id3TranscriptEmbedder, "_write_frame", boom)
+
+    assert Id3TranscriptEmbedder().embed(segments, {}, "fake", "key", output) is False
 
 
 def test_edge_stream_timeout_still_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -93,8 +93,11 @@ Sentence rules:
 - Sentences are ordered by non-decreasing `start`. Small overlaps between
   adjacent sentences are permitted (encoder timing jitter); consumers should
   select by binary search over `start`.
-- `words`: word cue array, empty iff the chapter's granularity is
-  `"sentence"`.
+- `words`: word cue array. Always empty in a `"sentence"`-granularity chapter.
+  In a `"word"`-granularity chapter it is populated, except that an
+  un-narrated span (e.g. a sentence of stray punctuation) may have an empty
+  array; at least one sentence in the chapter carries word cues. Consumers must
+  tolerate an occasional empty `words` array in a word-granularity chapter.
 
 Word cue rules:
 
