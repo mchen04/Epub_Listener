@@ -11,16 +11,42 @@ from epub_listener.application.ports import (
     GenerationCallback,
     TTSJob,
 )
+from epub_listener.domain.alignment import RawWordCue
 from epub_listener.domain.exceptions import TTSGenerationError
 from epub_listener.infrastructure.tts.base import normalize_edge_speed
 from epub_listener.infrastructure.tts.batch import run_async_safely, run_bounded_async
 from epub_listener.infrastructure.tts.finalize import commit_generated_mp3
 from epub_listener.infrastructure.tts.ports import TTSProvider
+from epub_listener.infrastructure.tts.transcript_capture import capture_chapter_transcript
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_VOICE = "en-US-AriaNeural"
 DEFAULT_EDGE_TTS_TIMEOUT_SECONDS = 300
+
+# WordBoundary offsets/durations are reported in 100-nanosecond ticks.
+_TICKS_PER_MS = 10_000
+# Measured against acoustic speech onsets in the delivered MP3 audio, Edge's
+# WordBoundary offsets run consistently ~100 ms early (median -106 ms over a
+# 24-word calibration set; see docs/evidence/read-along-ledger.md).
+_BOUNDARY_LEAD_CORRECTION_MS = 100
+
+
+def _boundary_cues(boundaries: list[dict]) -> list[RawWordCue]:
+    cues: list[RawWordCue] = []
+    for boundary in boundaries:
+        text = str(boundary.get("text") or "").strip()
+        offset = boundary.get("offset")
+        duration = boundary.get("duration")
+        if not text or not isinstance(offset, int) or not isinstance(duration, int):
+            continue
+        start_ms = max(0, round(offset / _TICKS_PER_MS) + _BOUNDARY_LEAD_CORRECTION_MS)
+        end_ms = max(
+            start_ms,
+            round((offset + max(0, duration)) / _TICKS_PER_MS) + _BOUNDARY_LEAD_CORRECTION_MS,
+        )
+        cues.append(RawWordCue(text, start_ms, end_ms))
+    return cues
 
 
 class EdgeTTSProvider(TTSProvider):
@@ -31,7 +57,11 @@ class EdgeTTSProvider(TTSProvider):
 
     def generate(self, text: str, output: Path, voice: str | None, speed: str) -> int:
         """Generate audio and return duration in ms."""
-        return run_async_safely(self.generate_job(TTSJob("_single", text, output, voice, speed)))
+        return self.run_job(TTSJob("_single", text, output, voice, speed))
+
+    def run_job(self, job: TTSJob) -> int:
+        """Synchronous single-job entry point used by the sequential batch."""
+        return run_async_safely(self.generate_job(job))
 
     async def generate_job(self, job: TTSJob) -> int:
         voice = job.voice or DEFAULT_VOICE
@@ -39,7 +69,16 @@ class EdgeTTSProvider(TTSProvider):
         tmp_output = job.output.with_name(f".{job.output.stem}.tmp{job.output.suffix}")
         try:
             tmp_output.unlink(missing_ok=True)
-            await self._generate_async(job.text, str(tmp_output), voice, rate)
+            boundaries = await self._generate_async(job.text, str(tmp_output), voice, rate)
+            if job.transcript_path is not None:
+                capture_chapter_transcript(
+                    job.transcript_path,
+                    job.chapter_id,
+                    "edge",
+                    job.text,
+                    _boundary_cues(boundaries),
+                    [],
+                )
             return commit_generated_mp3(tmp_output, job.output)
         except TimeoutError as exc:
             logger.error("Edge-TTS timed out after %ss for %s", self.timeout_seconds, job.output)
@@ -66,14 +105,30 @@ class EdgeTTSProvider(TTSProvider):
         output_file: str,
         voice: str,
         rate: str,
-    ) -> None:
-        communicate = edge_tts.Communicate(text, voice, rate=rate)
-        save_task = asyncio.create_task(communicate.save(output_file))
-        done, _ = await asyncio.wait((save_task,), timeout=self.timeout_seconds)
+    ) -> list[dict]:
+        """Stream audio to disk while capturing WordBoundary metadata.
+
+        ``Communicate.save`` writes the same audio chunks but discards the
+        metadata stream, so word timings must be captured here.
+        """
+        communicate = edge_tts.Communicate(text, voice, rate=rate, boundary="WordBoundary")
+        boundaries: list[dict] = []
+
+        async def stream_to_file() -> None:
+            with open(output_file, "wb") as handle:
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        handle.write(chunk["data"])
+                    elif chunk["type"] == "WordBoundary":
+                        boundaries.append(chunk)
+
+        stream_task = asyncio.create_task(stream_to_file())
+        done, _ = await asyncio.wait((stream_task,), timeout=self.timeout_seconds)
         if not done:
-            save_task.cancel()
+            stream_task.cancel()
             raise TimeoutError
-        await save_task
+        await stream_task
+        return boundaries
 
 
 class EdgeAsyncTTSBatchGenerator:

@@ -16,6 +16,7 @@ from epub_listener.config import Settings
 from epub_listener.domain.exceptions import EpubListenerError, ResumeError
 from epub_listener.infrastructure.media.ffmpeg_assembler import FFmpegMediaAssembler
 from epub_listener.infrastructure.media.metadata_builder import FFmpegMetadataBuilder
+from epub_listener.infrastructure.media.transcript_embedder import Id3TranscriptEmbedder
 from epub_listener.infrastructure.parsers.ebooklib_parser import EbookLibParser
 from epub_listener.infrastructure.persistence.json_tracker import JsonProgressTracker
 from epub_listener.infrastructure.tts.edge_tts import DEFAULT_VOICE as EDGE_DEFAULT_VOICE
@@ -43,6 +44,7 @@ class BuildWorkspace:
             temp_dir=self.path,
             title=settings.title,
             tts_backend=settings.tts_backend,
+            transcript=settings.transcript,
         )
 
     def create_tracker(self) -> ProgressTracker:
@@ -126,6 +128,7 @@ def main() -> int:
             assembler=FFmpegMediaAssembler(),
             metadata_builder=FFmpegMetadataBuilder(),
             tracker=workspace.create_tracker(),
+            transcript_embedder=Id3TranscriptEmbedder(),
         )
         build_started = True
         output = use_case.execute(command)

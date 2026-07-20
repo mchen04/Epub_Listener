@@ -8,6 +8,7 @@ Convert any standard `.epub` file into a fully narrated `.mp3` audiobook with sk
 - **Customizable Speed & Voice**: CLI flags for playback speed and voice selection.
 - **Resume Support**: Checksum-based resume prevents re-generating completed chapters.
 - **Concurrent Generation**: Shared batch runners drive async Edge-TTS and process-pooled Kokoro generation, with resume progress saved after each completed chapter.
+- **Read-Along Transcript** (default on): captures the word timings the TTS engines already produce and embeds a timestamped transcript in the MP3 as one ID3 GEOB frame (plus a sidecar JSON), so read-along players like Hark can highlight the narrated sentence and mark the spoken word. Timestamps are chapter-relative and measured against the final assembled audio (median word-onset error ≤ 30 ms per engine). Kokoro and Edge-TTS produce word-level cues; MLX Kokoro falls back to sentence-level. Pass `--no-transcript` to disable; with it off, output behaves exactly as before. Format: [`docs/transcript-format.md`](docs/transcript-format.md).
 
 ## Prerequisites
 - **Python 3.10+**
@@ -48,6 +49,9 @@ python -m epub_listener my_book.epub --use-kokoro --kokoro-hybrid-mps
 # Faster Kokoro inference on Apple Silicon (same voices, sequential MLX execution)
 python -m epub_listener my_book.epub --use-kokoro --kokoro-mlx \
   --kokoro-voice af_heart --concurrency sequential
+
+# Generate without the embedded read-along transcript
+python -m epub_listener my_book.epub --no-transcript
 
 # Override title and author metadata
 python -m epub_listener my_book.epub --title "My Book" --author "Author Name"

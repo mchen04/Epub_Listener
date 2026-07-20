@@ -9,9 +9,11 @@ from epub_listener.application.ports import (
     MediaAssembler,
     MetadataBuilder,
     ProgressTracker,
+    TranscriptEmbedder,
     TTSBatchGenerator,
     TTSJob,
     TTSResult,
+    transcript_path_for,
 )
 from epub_listener.domain.exceptions import EpubListenerError, TTSGenerationError
 from epub_listener.domain.models import AudiobookProject, AudioSegment, Chapter
@@ -29,12 +31,14 @@ class BuildAudiobookUseCase:
         assembler: MediaAssembler,
         metadata_builder: MetadataBuilder,
         tracker: ProgressTracker,
+        transcript_embedder: TranscriptEmbedder | None = None,
     ) -> None:
         self._parser = parser
         self._tts = tts
         self._assembler = assembler
         self._metadata_builder = metadata_builder
         self._tracker = tracker
+        self._transcript_embedder = transcript_embedder
 
     def execute(self, command: BuildAudiobookCommand) -> Path:
         """Run the full build pipeline.
@@ -89,14 +93,25 @@ class BuildAudiobookUseCase:
         logger.info("Step 4/4: Exporting final audiobook: %s", output_path)
         self._assembler.assemble(segments, meta_path, output_path)
 
+        if command.transcript and self._transcript_embedder is not None:
+            logger.info("Embedding read-along transcript...")
+            embedded = self._transcript_embedder.embed(
+                segments,
+                chapter_titles,
+                command.tts_backend,
+                command.generation_key,
+                output_path,
+            )
+            if not embedded:
+                logger.warning("Audiobook saved without a read-along transcript.")
+
         logger.info("Success! Audiobook saved to %s", output_path)
         return output_path
 
     def _generate_audio(
         self, project: AudiobookProject, command: BuildAudiobookCommand
     ) -> list[AudioSegment]:
-        generation_key = command.generation_key
-        segments_by_chapter, pending = self._partition_pending(project, generation_key)
+        segments_by_chapter, pending = self._partition_pending(project, command)
         if pending:
             chapters_by_id = {chapter.id: chapter for chapter in pending}
             recorded_chapter_ids: set[str] = set()
@@ -107,6 +122,11 @@ class BuildAudiobookUseCase:
                     output=self._audio_path(chapter, project),
                     voice=command.voice,
                     speed=command.speed,
+                    transcript_path=(
+                        transcript_path_for(self._audio_path(chapter, project))
+                        if command.transcript
+                        else None
+                    ),
                 )
                 for chapter in pending
             ]
@@ -126,7 +146,7 @@ class BuildAudiobookUseCase:
                     chapter,
                     output,
                     result,
-                    generation_key,
+                    command.generation_key,
                 )
                 recorded_chapter_ids.add(result.chapter_id)
 
@@ -144,13 +164,13 @@ class BuildAudiobookUseCase:
         ]
 
     def _partition_pending(
-        self, project: AudiobookProject, generation_key: str
+        self, project: AudiobookProject, command: BuildAudiobookCommand
     ) -> tuple[dict[str, AudioSegment], list[Chapter]]:
         """Split chapters into cached segments (reused) and chapters needing generation."""
         cached: dict[str, AudioSegment] = {}
         pending: list[Chapter] = []
         for chapter in project.chapters:
-            seg = self._load_cached_segment(chapter, project, generation_key)
+            seg = self._load_cached_segment(chapter, project, command)
             if seg:
                 logger.info("  [-] Skipping (cached): %s", chapter.title)
                 cached[chapter.id] = seg
@@ -163,13 +183,19 @@ class BuildAudiobookUseCase:
         return project.temp_dir / f"chap_{chapter.id}.mp3"
 
     def _load_cached_segment(
-        self, chapter: Chapter, project: AudiobookProject, generation_key: str
+        self, chapter: Chapter, project: AudiobookProject, command: BuildAudiobookCommand
     ) -> AudioSegment | None:
         """Return the already-generated segment for a chapter, or None if not cached."""
-        if not self._tracker.is_complete(chapter.id, chapter.checksum, generation_key):
+        if not self._tracker.is_complete(chapter.id, chapter.checksum, command.generation_key):
             return None
         audio_path = self._audio_path(chapter, project)
         if not audio_path.exists() or audio_path.stat().st_size == 0:
+            return None
+        # A cached chapter from a build without transcript capture must be
+        # regenerated when capture is on, or the final book would embed an
+        # incomplete transcript.
+        if command.transcript and not transcript_path_for(audio_path).exists():
+            logger.info("Chapter %s cached without a transcript, regenerating.", chapter.id)
             return None
         duration = self._tracker.cached_duration_ms(chapter.id)
         if duration <= 0:

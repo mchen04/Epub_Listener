@@ -15,6 +15,13 @@ class TTSJob:
     output: Path
     voice: str | None
     speed: str
+    # None disables transcript capture for this job.
+    transcript_path: Path | None = None
+
+
+def transcript_path_for(audio_path: Path) -> Path:
+    """Workspace transcript file for a chapter's audio file."""
+    return audio_path.with_suffix(".transcript.json")
 
 
 @dataclass(frozen=True)
@@ -79,6 +86,23 @@ class MetadataBuilder(Protocol):
         output: Path,
     ) -> None:
         """Write the metadata file to ``output``."""
+        ...
+
+
+class TranscriptEmbedder(Protocol):
+    """Combines per-chapter transcripts and embeds them into the final MP3."""
+
+    def embed(
+        self,
+        segments: list[AudioSegment],
+        chapter_titles: dict[str, str],
+        engine: str,
+        generation_key: str,
+        output: Path,
+    ) -> bool:
+        """Embed the combined transcript; returns False (without raising) when
+        chapter transcripts are missing or invalid so a build never fails over
+        transcript trouble."""
         ...
 
 

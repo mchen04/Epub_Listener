@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 
+from epub_listener.application.ports import TTSJob
 from epub_listener.domain.exceptions import TTSGenerationError
 from epub_listener.infrastructure.tts.base import (
     edge_speed_to_multiplier,
@@ -15,6 +16,7 @@ from epub_listener.infrastructure.tts.base import (
 )
 from epub_listener.infrastructure.tts.finalize import commit_generated_mp3
 from epub_listener.infrastructure.tts.ports import TTSProvider
+from epub_listener.infrastructure.tts.transcript_capture import capture_chapter_transcript
 from epub_listener.infrastructure.utils.ffmpeg_runner import run_ffmpeg
 
 logger = logging.getLogger(__name__)
@@ -60,6 +62,10 @@ class KokoroMLXTTSProvider(TTSProvider):
     """Generate Kokoro speech through Apple's MLX framework."""
 
     def generate(self, text: str, output: Path, voice: str | None, speed: str) -> int:
+        return self.run_job(TTSJob("_single", text, output, voice, speed))
+
+    def run_job(self, job: TTSJob) -> int:
+        text, output, voice, speed = job.text, job.output, job.voice, job.speed
         voice = voice or DEFAULT_VOICE
         tmp_wav = output.with_name(f".{output.stem}.tmp.wav")
         tmp_mp3 = output.with_name(f".{output.stem}.tmp{output.suffix}")
@@ -76,6 +82,7 @@ class KokoroMLXTTSProvider(TTSProvider):
             speed_float = edge_speed_to_multiplier(speed)
             total_samples = 0
             clipped_samples = 0
+            chunk_spans: list[tuple[str, int, int]] = []
             with sf.SoundFile(
                 tmp_wav,
                 mode="w",
@@ -93,14 +100,37 @@ class KokoroMLXTTSProvider(TTSProvider):
                     samples = np.asarray(result.audio, dtype=np.float32).reshape(-1)
                     if samples.size == 0:
                         continue
+                    chunk_start_ms = round(total_samples * 1000 / SAMPLE_RATE)
                     samples = samples * OUTPUT_GAIN
                     clipped_samples += int(np.count_nonzero(np.abs(samples) > 1.0))
                     np.clip(samples, -1.0, 1.0, out=samples)
                     wav_file.write(samples)
                     total_samples += int(samples.size)
+                    if job.transcript_path is not None:
+                        # The MLX pipeline reports no per-token timestamps, so
+                        # capture honest chunk-level spans (sentence fallback).
+                        chunk_text = getattr(result, "graphemes", None) or getattr(
+                            result, "text", ""
+                        )
+                        chunk_spans.append(
+                            (
+                                str(chunk_text),
+                                chunk_start_ms,
+                                round(total_samples * 1000 / SAMPLE_RATE),
+                            )
+                        )
 
             if total_samples <= 0:
                 raise TTSGenerationError(f"MLX Kokoro produced no audio for {output}")
+            if job.transcript_path is not None:
+                capture_chapter_transcript(
+                    job.transcript_path,
+                    job.chapter_id,
+                    "kokoro-mlx",
+                    text,
+                    [],
+                    chunk_spans,
+                )
             if clipped_samples:
                 logger.warning(
                     "MLX Kokoro clipped %d of %d samples for %s",

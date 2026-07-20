@@ -16,6 +16,7 @@ from epub_listener.application.ports import (
     GenerationCallback,
     TTSJob,
 )
+from epub_listener.domain.alignment import RawWordCue
 from epub_listener.domain.exceptions import TTSGenerationError
 from epub_listener.infrastructure.tts.base import (
     edge_speed_to_multiplier,
@@ -24,6 +25,10 @@ from epub_listener.infrastructure.tts.base import (
 from epub_listener.infrastructure.tts.batch import run_bounded_futures
 from epub_listener.infrastructure.tts.finalize import commit_generated_mp3
 from epub_listener.infrastructure.tts.ports import TTSProvider
+from epub_listener.infrastructure.tts.transcript_capture import (
+    KokoroTokenWalker,
+    capture_chapter_transcript,
+)
 from epub_listener.infrastructure.utils.ffmpeg_runner import run_ffmpeg
 
 logger = logging.getLogger(__name__)
@@ -127,6 +132,10 @@ def _generate_kokoro_job(job: TTSJob, cancel_event: Any | None = None) -> int:
         speed_float = edge_speed_to_multiplier(job.speed)
         generator = pipeline(job.text, voice=voice, speed=speed_float)
 
+        capture = job.transcript_path is not None
+        walker = KokoroTokenWalker(job.text) if capture else None
+        word_cues: list[RawWordCue] = []
+        chunk_spans: list[tuple[str, int, int]] = []
         total_samples = 0
         with sf.SoundFile(
             tmp_wav_path,
@@ -135,21 +144,40 @@ def _generate_kokoro_job(job: TTSJob, cancel_event: Any | None = None) -> int:
             channels=1,
             format="WAV",
         ) as wav_file:
-            for _, _, audio in generator:
+            for result in generator:
                 if _cancelled(cancel_event):
                     raise TTSGenerationError("Kokoro batch cancelled")
-                samples = np.asarray(audio, dtype=np.float32)
+                samples = np.asarray(result.audio, dtype=np.float32)
                 if samples.ndim != 1:
                     samples = samples.reshape(-1)
                 if samples.size == 0:
                     continue
+                chunk_start_ms = int(round(total_samples * 1000 / SAMPLE_RATE))
                 wav_file.write(samples)
                 total_samples += int(samples.shape[0])
+                if capture and walker is not None:
+                    word_cues.extend(walker.cues_for_chunk(result.tokens, chunk_start_ms))
+                    chunk_spans.append(
+                        (
+                            result.graphemes,
+                            chunk_start_ms,
+                            int(round(total_samples * 1000 / SAMPLE_RATE)),
+                        )
+                    )
 
         if total_samples <= 0:
             raise TTSGenerationError(f"Kokoro produced no audio for {job.output}")
         if _cancelled(cancel_event):
             raise TTSGenerationError("Kokoro batch cancelled")
+        if capture and job.transcript_path is not None:
+            capture_chapter_transcript(
+                job.transcript_path,
+                job.chapter_id,
+                "kokoro",
+                job.text,
+                word_cues,
+                chunk_spans,
+            )
 
         run_ffmpeg(
             "-i",
@@ -232,6 +260,9 @@ class KokoroTTSProvider(TTSProvider):
     def generate(self, text: str, output: Path, voice: str | None, speed: str) -> int:
         """Generate audio and return duration in ms."""
         return self.generate_job(TTSJob("_single", text, output, voice, speed))
+
+    def run_job(self, job: TTSJob) -> int:
+        return self.generate_job(job)
 
 
 class KokoroParallelTTSBatchGenerator:
