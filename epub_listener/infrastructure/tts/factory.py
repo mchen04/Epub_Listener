@@ -19,18 +19,21 @@ def create_tts_batch_generator(
     max_workers: int,
     kokoro_hybrid_mps: bool = False,
     kokoro_mlx: bool = False,
+    kokoro_preset: str | None = None,
 ) -> TTSBatchGenerator:
     if kokoro_hybrid_mps and kokoro_mlx:
         raise ConfigurationError("--kokoro-hybrid-mps and --kokoro-mlx are mutually exclusive")
     if kokoro_mlx and not use_kokoro:
         raise ConfigurationError("--kokoro-mlx requires --use-kokoro")
+    if kokoro_preset and not kokoro_mlx:
+        raise ConfigurationError("--kokoro-preset requires --kokoro-mlx")
     if kokoro_hybrid_mps and not use_kokoro:
         raise ConfigurationError("--kokoro-hybrid-mps requires --use-kokoro")
     if use_kokoro:
         if kokoro_mlx:
             if concurrency not in ("auto", "sequential"):
                 raise ConfigurationError("--kokoro-mlx requires --concurrency sequential or auto")
-            return SequentialTTSBatchGenerator(KokoroMLXTTSProvider())
+            return SequentialTTSBatchGenerator(KokoroMLXTTSProvider(preset=kokoro_preset))
         mode = _resolve_backend_concurrency(
             concurrency,
             backend="Kokoro",
