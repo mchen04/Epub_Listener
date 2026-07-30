@@ -46,7 +46,7 @@ MODEL_REPO = "mlx-community/Kokoro-82M-bf16"
 OUTPUT_GAIN_DB = 2.7
 OUTPUT_GAIN = 10 ** (OUTPUT_GAIN_DB / 20)
 
-_ENGINE: Any | None = None
+_ENGINES: dict[str, Any] = {}
 _MODEL: Any | None = None
 
 
@@ -59,27 +59,32 @@ def _quiet_phonemizer() -> None:
 DEFAULT_PRESET = "ship-q8"
 
 
-def _get_engine() -> Any | None:
-    """FastKokoro engine, or None if fastkoko is not installed.
+def _get_engine(preset: str | None = None) -> Any | None:
+    """FastKokoro engine for `preset`, or None if fastkoko is not installed.
 
-    Preset via EPUB_KOKORO_PRESET: "ship-q8" (default; 114 MB artifact,
-    passes every floor-calibrated quality gate), "ship-q4" (87 MB, slight
-    worst-case timbre shift), "exact" (fp32, bit-clean vs the PyTorch
-    reference).
+    Presets: "ship-q8" (default; 114 MB artifact, passes every
+    floor-calibrated quality gate), "ship-q4" (87 MB, slight worst-case
+    timbre shift), "exact" (fp32, bit-clean vs the PyTorch reference),
+    "student-fast" (distilled ~10M params, far faster; af_heart only,
+    speed 1.0 only, no per-token timestamps).
+
+    Falls back to EPUB_KOKORO_PRESET when no preset is passed. Engines are
+    cached per preset so a mixed-preset process loads each one once.
     """
-    global _ENGINE
-    if _ENGINE is None:
-        _quiet_phonemizer()
+    _quiet_phonemizer()
+    try:
+        from fastkoko import from_preset
+    except ImportError:
+        return None
+    resolved = preset or os.environ.get("EPUB_KOKORO_PRESET", "").strip() or DEFAULT_PRESET
+    if resolved not in _ENGINES:
         try:
-            from fastkoko import from_preset
-        except ImportError:
-            return None
-        preset = os.environ.get("EPUB_KOKORO_PRESET", DEFAULT_PRESET).strip() or DEFAULT_PRESET
-        try:
-            _ENGINE = from_preset(preset)
+            _ENGINES[resolved] = from_preset(resolved)
         except Exception as exc:
-            raise TTSGenerationError(f"Could not initialize FastKokoro ({preset}): {exc}") from exc
-    return _ENGINE
+            raise TTSGenerationError(
+                f"Could not initialize FastKokoro ({resolved}): {exc}"
+            ) from exc
+    return _ENGINES[resolved]
 
 
 def _get_model() -> Any:
@@ -105,11 +110,14 @@ def _get_model() -> Any:
 class KokoroMLXTTSProvider(TTSProvider):
     """Generate Kokoro speech through Apple's MLX framework."""
 
+    def __init__(self, preset: str | None = None) -> None:
+        self._preset = preset
+
     def generate(self, text: str, output: Path, voice: str | None, speed: str) -> int:
         return self.run_job(TTSJob("_single", text, output, voice, speed))
 
     def run_job(self, job: TTSJob) -> int:
-        engine = _get_engine()
+        engine = _get_engine(self._preset)
         if engine is not None:
             return self._run_fast(job, engine)
         return self._run_legacy(job)

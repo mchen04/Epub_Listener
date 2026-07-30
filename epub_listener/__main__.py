@@ -119,6 +119,7 @@ def main() -> int:
             max_workers=settings.max_workers,
             kokoro_hybrid_mps=settings.kokoro_hybrid_mps,
             kokoro_mlx=settings.kokoro_mlx,
+            kokoro_preset=settings.kokoro_preset,
         )
         workspace = resolve_workspace(settings)
         command = workspace.create_command(settings)

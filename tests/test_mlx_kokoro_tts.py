@@ -26,7 +26,7 @@ def _force_legacy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     and silently ignores the faked mlx-audio model, so these tests would pass
     or fail depending on the developer's environment.
     """
-    monkeypatch.setattr(mlx_kokoro_tts, "_get_engine", lambda: None)
+    monkeypatch.setattr(mlx_kokoro_tts, "_get_engine", lambda preset=None: None)
 
 
 def test_mlx_provider_applies_gain_limits_peaks_and_commits_atomically(
@@ -151,7 +151,7 @@ def test_fast_path_writes_engine_audio_without_legacy_gain(
         assert sample_rate == mlx_kokoro_tts.SAMPLE_RATE
         Path(args[-1]).write_bytes(b"encoded")  # type: ignore[arg-type]
 
-    monkeypatch.setattr(mlx_kokoro_tts, "_get_engine", lambda: engine)
+    monkeypatch.setattr(mlx_kokoro_tts, "_get_engine", lambda preset=None: engine)
     monkeypatch.setattr(mlx_kokoro_tts, "run_ffmpeg", fake_run_ffmpeg)
     monkeypatch.setattr(mlx_kokoro_tts, "commit_generated_mp3", lambda source, output: 4321)
 

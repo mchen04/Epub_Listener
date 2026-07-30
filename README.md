@@ -50,6 +50,10 @@ python -m epub_listener my_book.epub --use-kokoro --kokoro-hybrid-mps
 python -m epub_listener my_book.epub --use-kokoro --kokoro-mlx \
   --kokoro-voice af_heart --concurrency sequential
 
+# Pick the MLX model: exact (highest fidelity), ship-q8 (default), ship-q4 (smaller),
+# or student-fast (roughly 3s/chapter, but af_heart only, +0% speed only, no word timings)
+python -m epub_listener my_book.epub --use-kokoro --kokoro-mlx --kokoro-preset exact
+
 # Generate without the embedded read-along transcript
 python -m epub_listener my_book.epub --no-transcript
 

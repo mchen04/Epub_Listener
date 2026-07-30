@@ -84,6 +84,15 @@ def parse_args() -> Settings:
         help="Use Apple MLX for faster Kokoro inference",
     )
     parser.add_argument(
+        "--kokoro-preset",
+        default=argparse.SUPPRESS,
+        help=(
+            "FastKokoro model preset: ship-q8 (default, balanced), ship-q4 (smaller), "
+            "exact (highest fidelity), student-fast (fastest; af_heart only, "
+            "+0%% speed only, no word timings)"
+        ),
+    )
+    parser.add_argument(
         "--no-transcript",
         action="store_false",
         dest="transcript",
@@ -121,5 +130,6 @@ def _format_validation_error(exc: ValidationError) -> str:
     for error in exc.errors():
         location = ".".join(str(part) for part in error["loc"])
         message = str(error["msg"]).removeprefix("Value error, ")
-        messages.append(f"{location}: {message}")
+        # Whole-model validators carry no location; don't emit a bare ": ".
+        messages.append(f"{location}: {message}" if location else message)
     return "; ".join(messages)

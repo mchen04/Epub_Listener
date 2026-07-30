@@ -1,13 +1,22 @@
 """Application configuration via Pydantic."""
 
+import os
+from importlib.util import find_spec
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from epub_listener.concurrency import ConcurrencyStrategy
 from epub_listener.domain.sanitize import sanitize_filename
 from epub_listener.domain.speed import is_valid_speed
+
+DEFAULT_KOKORO_PRESET = "ship-q8"
+
+# Distilled presets: ~10M active params, far faster but single-voice
+# (af_heart), fixed-speed, and unable to report per-token timestamps.
+STUDENT_KOKORO_PRESETS = frozenset({"student", "student-fast", "student-exact-prosody"})
+STUDENT_PRESET_VOICE = "af_heart"
 
 
 class Settings(BaseSettings):
@@ -40,6 +49,10 @@ class Settings(BaseSettings):
         default=False,
         description="Use Apple MLX Kokoro inference",
     )
+    kokoro_preset: str | None = Field(
+        default=None,
+        description="FastKokoro model preset (e.g. ship-q8, exact, student-fast)",
+    )
     transcript: bool = Field(
         default=True,
         description="Capture word timings and embed a read-along transcript in the MP3",
@@ -69,6 +82,44 @@ class Settings(BaseSettings):
             raise ValueError("max_workers must be at least 1")
         return v
 
+    @model_validator(mode="after")
+    def validate_student_preset_limits(self) -> "Settings":
+        """Reject options a distilled preset cannot honor.
+
+        These would otherwise fail silently or mid-build: the engine ignores
+        any requested voice, and raises on a non-1.0 speed only once the first
+        chapter is synthesized.
+        """
+        preset = self.resolved_kokoro_preset
+        if preset is None or preset not in STUDENT_KOKORO_PRESETS:
+            return self
+        if self.speed != "+0%":
+            raise ValueError(
+                f"Kokoro preset '{preset}' supports only --speed +0% (got {self.speed})"
+            )
+        voice = self.kokoro_voice
+        if voice is not None and voice != STUDENT_PRESET_VOICE:
+            raise ValueError(
+                f"Kokoro preset '{preset}' is single-voice; "
+                f"use --kokoro-voice {STUDENT_PRESET_VOICE} (got {voice})"
+            )
+        return self
+
+    @property
+    def resolved_kokoro_preset(self) -> str | None:
+        """The FastKokoro preset in effect, or None when the engine is unavailable.
+
+        The CLI flag wins over the legacy EPUB_KOKORO_PRESET environment
+        variable. Returns None when fastkoko is not importable, since the
+        provider then falls back to mlx-audio and the preset is meaningless.
+        """
+        if not (self.use_kokoro and self.kokoro_mlx):
+            return None
+        if find_spec("fastkoko") is None:
+            return None
+        env = os.environ.get("EPUB_KOKORO_PRESET", "").strip()
+        return self.kokoro_preset or env or DEFAULT_KOKORO_PRESET
+
     @property
     def resolved_voice(self) -> str | None:
         """The voice to use for the active TTS backend."""
@@ -76,9 +127,18 @@ class Settings(BaseSettings):
 
     @property
     def tts_backend(self) -> str:
-        """The active TTS backend identifier used for resume cache compatibility."""
+        """The active TTS backend identifier used for resume cache compatibility.
+
+        The preset is part of the identity: each one produces audibly
+        different audio, so resuming under a different preset must invalidate
+        cached chapters rather than splice two models into one audiobook.
+        """
         if self.use_kokoro and self.kokoro_mlx:
-            return "kokoro-mlx-gain+2.7db"
+            preset = self.resolved_kokoro_preset
+            if preset is None:
+                # mlx-audio fallback, which applies the +2.7 dB gain hack.
+                return "kokoro-mlx-gain+2.7db"
+            return f"kokoro-mlx-{preset}"
         return "kokoro" if self.use_kokoro else "edge"
 
     def resolve_output_path(self) -> Path:

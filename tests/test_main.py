@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 
 from epub_listener import __main__ as main_module
+from epub_listener import config as config_module
 from epub_listener.application.commands import BuildAudiobookCommand
 from epub_listener.config import Settings
 from epub_listener.domain.exceptions import EpubListenerError
@@ -171,6 +172,7 @@ def test_main_uses_one_workspace_for_tracker_and_command_then_cleans_success(
 
 def test_workspace_command_uses_effective_default_voice_for_generation_key(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = main_module.BuildWorkspace(tmp_path / "work", auto_created=False)
 
@@ -179,14 +181,41 @@ def test_workspace_command_uses_effective_default_voice_for_generation_key(
         _settings(tmp_path, voice=main_module.EDGE_DEFAULT_VOICE)
     )
     implicit_kokoro = workspace.create_command(_settings(tmp_path, use_kokoro=True))
-    mlx_kokoro = workspace.create_command(_settings(tmp_path, use_kokoro=True, kokoro_mlx=True))
 
     assert implicit_edge.voice == main_module.EDGE_DEFAULT_VOICE
     assert implicit_edge.generation_key == explicit_edge.generation_key
     assert f"voice={main_module.EDGE_DEFAULT_VOICE}" in implicit_edge.generation_key
     assert implicit_kokoro.voice == main_module.KOKORO_DEFAULT_VOICE
     assert f"voice={main_module.KOKORO_DEFAULT_VOICE}" in implicit_kokoro.generation_key
-    assert "tts_backend=kokoro-mlx-gain+2.7db" in mlx_kokoro.generation_key
+
+    # Pin fastkoko availability: the MLX key names the active model, so it
+    # differs between the FastKokoro engine and the mlx-audio fallback.
+    monkeypatch.delenv("EPUB_KOKORO_PRESET", raising=False)
+    monkeypatch.setattr(config_module, "find_spec", lambda name: object())
+    mlx_fast = workspace.create_command(_settings(tmp_path, use_kokoro=True, kokoro_mlx=True))
+    assert "tts_backend=kokoro-mlx-ship-q8" in mlx_fast.generation_key
+
+    monkeypatch.setattr(config_module, "find_spec", lambda name: None)
+    mlx_legacy = workspace.create_command(_settings(tmp_path, use_kokoro=True, kokoro_mlx=True))
+    assert "tts_backend=kokoro-mlx-gain+2.7db" in mlx_legacy.generation_key
+
+
+def test_generation_key_distinguishes_kokoro_presets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Resuming under a different preset must not reuse cached chapters."""
+    monkeypatch.delenv("EPUB_KOKORO_PRESET", raising=False)
+    monkeypatch.setattr(config_module, "find_spec", lambda name: object())
+    workspace = main_module.BuildWorkspace(tmp_path / "work", auto_created=False)
+
+    def key_for(preset: str | None) -> str:
+        settings = _settings(tmp_path, use_kokoro=True, kokoro_mlx=True, kokoro_preset=preset)
+        return workspace.create_command(settings).generation_key
+
+    assert key_for("exact") != key_for("ship-q8")
+    assert key_for("student-fast") != key_for("ship-q8")
+    assert key_for(None) == key_for("ship-q8")  # default
 
 
 def test_main_preserves_auto_workspace_and_prints_retry_on_build_failure(
