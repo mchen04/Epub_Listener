@@ -24,10 +24,8 @@ import numpy as np
 from epub_listener.application.ports import TTSJob
 from epub_listener.domain.alignment import RawWordCue
 from epub_listener.domain.exceptions import TTSGenerationError
-from epub_listener.infrastructure.tts.base import (
-    edge_speed_to_multiplier,
-    infer_kokoro_lang_for_voice,
-)
+from epub_listener.domain.speed import speed_to_multiplier
+from epub_listener.infrastructure.tts.base import infer_kokoro_lang_for_voice
 from epub_listener.infrastructure.tts.finalize import commit_generated_mp3
 from epub_listener.infrastructure.tts.ports import TTSProvider
 from epub_listener.infrastructure.tts.transcript_capture import (
@@ -72,11 +70,17 @@ def _get_engine(preset: str | None = None) -> Any | None:
     cached per preset so a mixed-preset process loads each one once.
     """
     _quiet_phonemizer()
+    env_preset = os.environ.get("EPUB_KOKORO_PRESET", "").strip()
+    requested = preset or env_preset or None
     try:
         from fastkoko import from_preset
     except ImportError:
+        if requested is not None:
+            raise TTSGenerationError(
+                f"FastKokoro preset '{requested}' was requested, but fastkoko is not installed"
+            ) from None
         return None
-    resolved = preset or os.environ.get("EPUB_KOKORO_PRESET", "").strip() or DEFAULT_PRESET
+    resolved = requested or DEFAULT_PRESET
     if resolved not in _ENGINES:
         try:
             _ENGINES[resolved] = from_preset(resolved)
@@ -137,7 +141,7 @@ class KokoroMLXTTSProvider(TTSProvider):
         try:
             tmp_wav.unlink(missing_ok=True)
             tmp_mp3.unlink(missing_ok=True)
-            speed_float = edge_speed_to_multiplier(speed)
+            speed_float = speed_to_multiplier(speed)
             capture = job.transcript_path is not None
             walker = KokoroTokenWalker(text) if capture else None
             word_cues: list[RawWordCue] = []
@@ -203,7 +207,7 @@ class KokoroMLXTTSProvider(TTSProvider):
             tmp_wav.unlink(missing_ok=True)
             tmp_mp3.unlink(missing_ok=True)
             model = _get_model()
-            speed_float = edge_speed_to_multiplier(speed)
+            speed_float = speed_to_multiplier(speed)
             total_samples = 0
             clipped_samples = 0
             chunk_spans: list[tuple[str, int, int]] = []

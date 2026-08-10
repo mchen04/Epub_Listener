@@ -1,6 +1,7 @@
 """Safe ffmpeg subprocess runner."""
 
 import logging
+import shutil
 import subprocess
 import time
 from collections.abc import Callable
@@ -29,12 +30,16 @@ def run_ffmpeg(
     Raises:
         AssemblyError: If the command fails or times out.
     """
-    cmd = ["ffmpeg", "-y", *[str(a) for a in args]]
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        logger.error("ffmpeg not found in PATH")
+        raise AssemblyError("ffmpeg not found. Is FFmpeg installed?")
+    cmd = [ffmpeg, "-y", *[str(a) for a in args]]
     logger.debug("Running: %s", " ".join(cmd))
     if should_cancel is not None:
         return _run_cancellable_ffmpeg(cmd, timeout, should_cancel)
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - fixed resolved executable and argv
             cmd,
             capture_output=True,
             text=True,
@@ -59,7 +64,7 @@ def _run_cancellable_ffmpeg(
     should_cancel: Callable[[], bool],
 ) -> subprocess.CompletedProcess[str]:
     try:
-        process = subprocess.Popen(
+        process = subprocess.Popen(  # noqa: S603 - fixed resolved executable and argv
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

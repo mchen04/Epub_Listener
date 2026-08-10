@@ -7,7 +7,7 @@ from epub_listener import __main__ as main_module
 from epub_listener import config as config_module
 from epub_listener.application.commands import BuildAudiobookCommand
 from epub_listener.config import Settings
-from epub_listener.domain.exceptions import EpubListenerError
+from epub_listener.domain.exceptions import ConfigurationError, EpubListenerError
 
 
 def _settings(tmp_path: Path, **overrides: Any) -> Settings:
@@ -84,6 +84,34 @@ def test_main_rejects_missing_resume_dir(
     assert main_module.main() == 1
 
     assert f"resume dir not found: {missing_resume}" in capsys.readouterr().out
+
+
+def test_runtime_preflight_fails_before_work_for_missing_ffmpeg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(main_module.shutil, "which", lambda name: None)
+
+    with pytest.raises(ConfigurationError, match="ffmpeg, ffprobe"):
+        main_module.validate_runtime(_settings(tmp_path))
+
+
+def test_runtime_preflight_rejects_missing_local_executable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_which = main_module.shutil.which
+    monkeypatch.setattr(
+        main_module.shutil,
+        "which",
+        lambda name: real_which(name) if name in {"ffmpeg", "ffprobe"} else None,
+    )
+    settings = _settings(
+        tmp_path,
+        engine="command",
+        model_command="definitely-missing-local-tts --output {output}",
+    )
+
+    with pytest.raises(ConfigurationError, match="Local TTS executable not found"):
+        main_module.validate_runtime(settings)
 
 
 def test_main_rejects_file_resume_dir(

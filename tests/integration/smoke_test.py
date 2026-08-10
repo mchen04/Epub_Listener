@@ -1,6 +1,7 @@
 """Comprehensive smoke test suite for the refactored Epub Listener."""
 
 import json
+import shutil
 import subprocess
 import tempfile
 from collections.abc import Sequence
@@ -192,9 +193,12 @@ def _write_tone_mp3(output: Path, frequency: int) -> None:
 
 
 def _probe_chapters(path: Path) -> list[dict[str, Any]]:
-    result = subprocess.run(
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is None:
+        raise RuntimeError("ffprobe is required for the integration smoke test")
+    result = subprocess.run(  # noqa: S603 - resolved trusted media tool
         [
-            "ffprobe",
+            ffprobe,
             "-v",
             "quiet",
             "-print_format",

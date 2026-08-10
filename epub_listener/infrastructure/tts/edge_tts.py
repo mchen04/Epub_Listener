@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any, cast
 
 import edge_tts
 
@@ -120,7 +121,7 @@ class EdgeTTSProvider(TTSProvider):
                     if chunk["type"] == "audio":
                         handle.write(chunk["data"])
                     elif chunk["type"] == "WordBoundary":
-                        boundaries.append(chunk)
+                        boundaries.append(cast(dict[str, Any], chunk))
 
         stream_task = asyncio.create_task(stream_to_file())
         done, _ = await asyncio.wait((stream_task,), timeout=self.timeout_seconds)

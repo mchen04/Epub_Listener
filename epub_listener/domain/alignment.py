@@ -135,7 +135,8 @@ def build_sentence_cues(text: str, cues: list[RawWordCue]) -> list[SentenceCue]:
     span_starts = [start for start, _ in spans]
     words_by_span: list[list[WordCue]] = [[] for _ in spans]
     for cue in anchored:
-        assert cue.char_start is not None and cue.char_end is not None
+        if cue.char_start is None or cue.char_end is None:
+            continue
         span_index = min(len(spans) - 1, max(0, bisect_right(span_starts, cue.char_start) - 1))
         start, end = spans[span_index]
         char_start = min(max(cue.char_start, start), end) - start
@@ -161,7 +162,12 @@ def build_sentence_cues(text: str, cues: list[RawWordCue]) -> list[SentenceCue]:
 
 
 def build_chunk_sentences(chunks: list[tuple[str, int, int]]) -> list[SentenceCue]:
-    """Sentence-granularity fallback from (text, start_ms, end_ms) chunks."""
+    """Sentence-granularity fallback from (text, start_ms, end_ms) chunks.
+
+    A model chunk may contain several display sentences. Distribute its known
+    duration proportionally by character count so read-along navigation stays
+    useful even when an engine cannot provide word boundaries.
+    """
     sentences: list[SentenceCue] = []
     running = 0
     for text, start_ms, end_ms in chunks:
@@ -169,8 +175,25 @@ def build_chunk_sentences(chunks: list[tuple[str, int, int]]) -> list[SentenceCu
         if not cleaned:
             continue
         start = max(int(start_ms), running)
-        sentences.append(SentenceCue(cleaned, start, max(int(end_ms), start), ()))
-        running = start
+        end = max(int(end_ms), start)
+        spans = split_sentence_spans(cleaned)
+        if not spans:
+            continue
+        weights = [max(1, span_end - span_start) for span_start, span_end in spans]
+        total_weight = sum(weights)
+        elapsed_weight = 0
+        for index, ((span_start, span_end), weight) in enumerate(zip(spans, weights, strict=True)):
+            sentence_start = start + round((end - start) * elapsed_weight / total_weight)
+            elapsed_weight += weight
+            sentence_end = (
+                end
+                if index + 1 == len(spans)
+                else start + round((end - start) * elapsed_weight / total_weight)
+            )
+            sentences.append(
+                SentenceCue(cleaned[span_start:span_end], sentence_start, sentence_end, ())
+            )
+        running = end
     return sentences
 
 

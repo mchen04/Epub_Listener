@@ -110,7 +110,7 @@ def test_assembly_timeout_scales_with_total_audio_duration(tmp_path: Path) -> No
 
 
 def test_ffconcat_escape_handles_apostrophe_paths() -> None:
-    path = Path("/tmp/reader's/chapter.mp3")
+    path = Path("/tmp/reader's/chapter.mp3")  # noqa: S108 - quoting regression fixture
     assert f"file '{_escape_ffconcat_path(path)}'" == "file '/tmp/reader'\\''s/chapter.mp3'"
 
 
@@ -148,8 +148,9 @@ def test_assembler_uses_ffconcat_escape_for_apostrophe_paths(
         output,
     )
 
-    assert concat_contents == "file '/tmp/reader'\\''s/chapter.mp3'\n".replace(
-        "/tmp/reader", str(tmp_path / "reader")
+    assert concat_contents == "file '/tmp/reader'\\''s/chapter.mp3'\n".replace(  # noqa: S108
+        "/tmp/reader",  # noqa: S108 - expected serialized fixture prefix
+        str(tmp_path / "reader"),
     )
 
 
