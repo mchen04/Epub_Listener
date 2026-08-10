@@ -2,6 +2,7 @@
 
 import json
 import logging
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -37,14 +38,18 @@ def get_audio_duration_ms(
 
         info = sf.info(str(audio_file_path))
         if info.frames > 0 and info.samplerate > 0:
-            return round(info.frames * 1000 / info.samplerate)
+            return int(round(info.frames * 1000 / info.samplerate))
     except Exception:
         logger.debug("soundfile could not measure %s; falling back to ffprobe", audio_file_path)
 
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is None:
+        logger.error("ffprobe not found in PATH")
+        raise AudioProbeError("ffprobe not found. Is FFmpeg installed?")
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - fixed resolved executable and argv
             [
-                "ffprobe",
+                ffprobe,
                 "-v",
                 "quiet",
                 "-print_format",

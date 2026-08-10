@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from epub_listener.domain.exceptions import TranscriptError
 
@@ -184,7 +184,7 @@ def _validate_granularity(
             any(sentence.words for sentence in sentences),
             f"{where}: word-granularity transcripts must contain word cues",
         )
-    return granularity
+    return cast(str, granularity)
 
 
 def parse_chapter_file(data: Any, *, where: str = "chapter transcript") -> dict[str, Any]:

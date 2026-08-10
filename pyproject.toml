@@ -1,18 +1,19 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "epub-listener"
-version = "2.0.0"
-description = "Convert EPUB files into narrated MP3 audiobooks with embedded chapter metadata."
+version = "2.1.0"
+description = "Convert EPUB files into narrated MP3 audiobooks with cloud, Hugging Face, or local TTS."
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     {name = "Michael Chen"}
 ]
-keywords = ["epub", "audiobook", "tts", "edge-tts", "kokoro"]
+keywords = ["epub", "audiobook", "tts", "edge-tts", "kokoro", "huggingface"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: End Users/Desktop",
@@ -26,7 +27,7 @@ dependencies = [
     "EbookLib>=0.20",
     "beautifulsoup4>=4.14.3",
     "requests>=2.32",
-    "kokoro>=0.9.4",
+    "numpy>=1.26",
     "soundfile>=0.13",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
@@ -34,6 +35,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+kokoro = [
+    "kokoro>=0.9.4",
+]
+huggingface = [
+    "transformers>=5.0,<6",
+    "torch>=2.2",
+    "accelerate>=1.0",
+    "sentencepiece>=0.2",
+    "safetensors>=0.4",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -61,8 +72,11 @@ target-version = ['py310']
 line-length = 100
 target-version = "py310"
 [tool.ruff.lint]
-select = ["E", "F", "I", "W", "UP", "B", "C4", "SIM"]
+select = ["E", "F", "I", "W", "UP", "B", "C4", "SIM", "S"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]  # pytest uses assertions as its test expression API.
 
 [tool.mypy]
 python_version = "3.10"
@@ -86,6 +100,7 @@ module = [
     "numpy",
     "numpy.*",
     "soundfile",
+    "fastkoko",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"

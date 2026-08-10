@@ -5,6 +5,7 @@ import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
+from importlib.util import find_spec
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -13,12 +14,13 @@ from epub_listener.application.orchestrator import BuildAudiobookUseCase
 from epub_listener.application.ports import ProgressTracker
 from epub_listener.cli import parse_args
 from epub_listener.config import Settings
-from epub_listener.domain.exceptions import EpubListenerError, ResumeError
+from epub_listener.domain.exceptions import ConfigurationError, EpubListenerError, ResumeError
 from epub_listener.infrastructure.media.ffmpeg_assembler import FFmpegMediaAssembler
 from epub_listener.infrastructure.media.metadata_builder import FFmpegMetadataBuilder
 from epub_listener.infrastructure.media.transcript_embedder import Id3TranscriptEmbedder
 from epub_listener.infrastructure.parsers.ebooklib_parser import EbookLibParser
 from epub_listener.infrastructure.persistence.json_tracker import JsonProgressTracker
+from epub_listener.infrastructure.tts.command_tts import parse_command_template
 from epub_listener.infrastructure.tts.edge_tts import DEFAULT_VOICE as EDGE_DEFAULT_VOICE
 from epub_listener.infrastructure.tts.factory import create_tts_batch_generator
 from epub_listener.infrastructure.tts.kokoro_tts import DEFAULT_VOICE as KOKORO_DEFAULT_VOICE
@@ -32,9 +34,11 @@ class BuildWorkspace:
     auto_created: bool
 
     def create_command(self, settings: Settings) -> BuildAudiobookCommand:
-        voice = settings.resolved_voice or (
-            KOKORO_DEFAULT_VOICE if settings.use_kokoro else EDGE_DEFAULT_VOICE
-        )
+        voice = settings.resolved_voice
+        if voice is None and settings.tts_engine == "edge":
+            voice = EDGE_DEFAULT_VOICE
+        elif voice is None and settings.tts_engine in {"kokoro", "kokoro-mlx"}:
+            voice = KOKORO_DEFAULT_VOICE
         return BuildAudiobookCommand(
             input_epub=settings.input_epub,
             output_path=settings.resolve_output_path(),
@@ -104,6 +108,34 @@ def cleanup_workspace(workspace: BuildWorkspace) -> None:
         logging.warning("Could not remove temp dir %s: %s", workspace.path, exc)
 
 
+def validate_runtime(settings: Settings) -> None:
+    """Fail before parsing/downloading when required runtime tools are absent."""
+    missing = [name for name in ("ffmpeg", "ffprobe") if shutil.which(name) is None]
+    if missing:
+        raise ConfigurationError(
+            f"Required executable(s) not found in PATH: {', '.join(missing)}. Install FFmpeg."
+        )
+
+    engine = settings.tts_engine
+    if engine == "huggingface" and find_spec("transformers") is None:
+        raise ConfigurationError(
+            "Hugging Face support is not installed. Run: pip install '.[huggingface]'"
+        )
+    if engine == "kokoro" and find_spec("kokoro") is None:
+        raise ConfigurationError("Kokoro is not installed. Run: pip install '.[kokoro]'")
+    if engine == "kokoro-mlx" and all(
+        find_spec(module) is None for module in ("fastkoko", "mlx_audio")
+    ):
+        raise ConfigurationError("MLX Kokoro is not installed. Run: pip install '.[mlx]'")
+    if engine == "command":
+        if settings.model_command is None:
+            raise ConfigurationError("--engine command requires --model-command")
+        executable = parse_command_template(settings.model_command)[0]
+        candidate = str(Path(executable).expanduser())
+        if shutil.which(candidate) is None:
+            raise ConfigurationError(f"Local TTS executable not found: {executable}")
+
+
 def main() -> int:
     """CLI entry point."""
     workspace: BuildWorkspace | None = None
@@ -111,15 +143,29 @@ def main() -> int:
     logging_ready = False
     try:
         settings = parse_args()
+        validate_runtime(settings)
         setup_logging(settings.log_level)
         logging_ready = True
         tts = create_tts_batch_generator(
-            use_kokoro=settings.use_kokoro,
+            engine=settings.tts_engine,
             concurrency=settings.concurrency,
             max_workers=settings.max_workers,
             kokoro_hybrid_mps=settings.kokoro_hybrid_mps,
             kokoro_mlx=settings.kokoro_mlx,
             kokoro_preset=settings.kokoro_preset,
+            model=settings.model,
+            revision=settings.revision,
+            device=settings.device,
+            dtype=settings.dtype,
+            trust_remote_code=settings.trust_remote_code,
+            local_files_only=settings.local_files_only,
+            model_options=settings.model_options,
+            speaker_embedding=settings.speaker_embedding,
+            chunk_chars=settings.chunk_chars,
+            chunk_pause_ms=settings.chunk_pause_ms,
+            model_command=settings.model_command,
+            command_output_format=settings.command_output_format,
+            model_timeout=settings.model_timeout,
         )
         workspace = resolve_workspace(settings)
         command = workspace.create_command(settings)

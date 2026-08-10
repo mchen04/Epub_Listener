@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import shutil
 import statistics
 import subprocess
 from dataclasses import dataclass
@@ -142,9 +143,12 @@ def _read_transcript(mp3: Path) -> BookTranscript:
 
 
 def _chapter_marks_ms(mp3: Path) -> list[tuple[float, float]]:
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is None:
+        raise RuntimeError("ffprobe is required for the accuracy gate")
     probe = json.loads(
-        subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_chapters", str(mp3)],
+        subprocess.run(  # noqa: S603 - resolved trusted media tool
+            [ffprobe, "-v", "quiet", "-print_format", "json", "-show_chapters", str(mp3)],
             capture_output=True,
             check=True,
         ).stdout
@@ -159,9 +163,12 @@ def _chapter_marks_ms(mp3: Path) -> list[tuple[float, float]]:
 def _decode(mp3: Path, tmp_path: Path, label: str) -> tuple[np.ndarray, int]:
     import soundfile as sf
 
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise RuntimeError("ffmpeg is required for the accuracy gate")
     wav = tmp_path / f"{label}.wav"
-    subprocess.run(
-        ["ffmpeg", "-y", "-v", "quiet", "-i", str(mp3), str(wav)],
+    subprocess.run(  # noqa: S603 - resolved trusted media tool
+        [ffmpeg, "-y", "-v", "quiet", "-i", str(mp3), str(wav)],
         check=True,
     )
     samples, rate = sf.read(wav, dtype="float32")

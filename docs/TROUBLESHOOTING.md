@@ -37,6 +37,35 @@ Kokoro is CPU/GPU intensive. It uses process-local model caches in parallel mode
 python -m epub_listener book.epub --use-kokoro --max-workers 1 --concurrency sequential
 ```
 
+The preferred equivalent is `--engine kokoro`. Kokoro is optional; install it with `pip install -e '.[kokoro]'`.
+
+## Hugging Face Model Does Not Load
+
+Install the adapter and common inference dependencies:
+
+```bash
+pip install -e '.[huggingface]'
+```
+
+Confirm the repository supports the Transformers `text-to-speech` pipeline, not merely a custom README script. Model-specific dependencies and inputs are listed on its model card. Pass architecture inputs with `--model-options @options.json`, or use `--speaker-embedding` for SpeechT5. A custom-script-only repository can be wrapped with `--engine command`.
+
+Remote repository code is intentionally disabled. If a reviewed model requires it, pin `--revision` to a commit and add `--trust-remote-code`. Do not enable that flag for an untrusted repository.
+
+If MPS or CUDA fails for a model, establish correctness first with:
+
+```bash
+epub-listener book.epub --engine huggingface --model org/model \
+  --device cpu --dtype float32
+```
+
+For token-length errors, lower `--chunk-chars`; for a model with its own long-text processor, use `--chunk-chars 0`.
+
+## Local Command Fails
+
+The template must contain `{output}` and the executable must write the declared `--command-output-format`. Text arrives on stdin and at `{text_file}`. The adapter does not invoke a shell, so pipes, redirects, environment assignments, and shell expansion are not interpreted; put those operations in a reviewed wrapper script.
+
+Run the executable directly with a short input, then retry with `--log-level DEBUG`. Increase `--model-timeout` for slow hardware. Failed and timed-out commands leave an existing completed chapter untouched and keep the build workspace for resume.
+
 ## Edge-TTS Connection Errors
 
 Edge-TTS requires an internet connection. If you hit rate limits or transient service errors, reduce async concurrency with `--max-workers`.

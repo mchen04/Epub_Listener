@@ -18,10 +18,8 @@ from epub_listener.application.ports import (
 )
 from epub_listener.domain.alignment import RawWordCue
 from epub_listener.domain.exceptions import TTSGenerationError
-from epub_listener.infrastructure.tts.base import (
-    edge_speed_to_multiplier,
-    infer_kokoro_lang_for_voice,
-)
+from epub_listener.domain.speed import speed_to_multiplier
+from epub_listener.infrastructure.tts.base import infer_kokoro_lang_for_voice
 from epub_listener.infrastructure.tts.batch import run_bounded_futures
 from epub_listener.infrastructure.tts.finalize import commit_generated_mp3
 from epub_listener.infrastructure.tts.ports import TTSProvider
@@ -129,7 +127,7 @@ def _generate_kokoro_job(job: TTSJob, cancel_event: Any | None = None) -> int:
         tmp_wav_path.unlink(missing_ok=True)
         tmp_output.unlink(missing_ok=True)
         pipeline = _get_pipeline(lang)
-        speed_float = edge_speed_to_multiplier(job.speed)
+        speed_float = speed_to_multiplier(job.speed)
         generator = pipeline(job.text, voice=voice, speed=speed_float)
 
         capture = job.transcript_path is not None
@@ -301,7 +299,8 @@ class KokoroParallelTTSBatchGenerator:
                 executor = ProcessPoolExecutor(max_workers=self.max_workers)
 
             def submit(job: TTSJob) -> Future[int]:
-                assert executor is not None
+                if executor is None:
+                    raise TTSGenerationError("Kokoro process pool was not initialized")
                 return executor.submit(KokoroTTSProvider.generate_job, job, cancel_event)
 
             def stop_workers(futures: Sequence[Future[int]]) -> None:
@@ -310,7 +309,8 @@ class KokoroParallelTTSBatchGenerator:
                 cancel_event.set()
                 for pending in futures:
                     pending.cancel()
-                assert executor is not None
+                if executor is None:
+                    raise TTSGenerationError("Kokoro process pool was not initialized")
                 _shutdown_process_pool_now(executor)
                 _cleanup_job_temp_files(jobs)
 
