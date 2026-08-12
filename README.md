@@ -20,8 +20,8 @@ Convert a standard `.epub` into a narrated `.mp3` audiobook with skippable chapt
 ## Install
 
 ```bash
-git clone https://github.com/mchen04/Epub_Listener.git
-cd Epub_Listener
+git clone https://github.com/mchen04/epub-listener.git
+cd epub-listener
 python3 -m venv .venv
 source .venv/bin/activate
 
